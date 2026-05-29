@@ -341,7 +341,8 @@ mod tests {
                 last_extraction_error       TEXT,
                 last_extraction_at          TIMESTAMPTZ,
                 created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
             )"#,
         )
         .execute(&pool)

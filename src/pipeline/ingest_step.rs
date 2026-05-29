@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::db::article_queries::{get_by_url, insert};
+use crate::config::Config;
+use crate::db::article_queries::{get_by_url, insert_batch};
 use crate::db::feed_queries::{get_by_id, get_last_ingested_pub_date, update_fetch_status};
 use crate::db::schema::{
     DuplicateStatus, FeedFetchStatus, ProcessingStatus, QualityStatus, RawArticle,
@@ -12,8 +12,6 @@ use crate::db::schema::{
 use crate::utils::rss_parser::parse_feed;
 use crate::utils::url_resolver::resolve_source_url;
 
-pub const FEED_USER_AGENT: &str = "MyPod-Pipeline/1.0 (RSS Reader)";
-pub const FEED_FETCH_TIMEOUT_MS: u64 = 15_000;
 pub const MAX_RECENT_ITEMS: usize = 30;
 
 #[derive(Debug, Clone)]
@@ -33,6 +31,7 @@ pub async fn process_ingest_step(
     pool: &PgPool,
     feed_id: &str,
     _run_id: Option<Uuid>,
+    config: &Config,
 ) -> IngestStepResult {
     info!(%feed_id, "Starting ingest step");
 
@@ -88,11 +87,7 @@ pub async fn process_ingest_step(
     let feed_name = feed.name.clone();
 
     // 2. Fetch RSS
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(FEED_FETCH_TIMEOUT_MS))
-        .user_agent(FEED_USER_AGENT)
-        .build()
-        .unwrap();
+    let client = config.http_client.client.clone();
 
     info!(%feed_id, feed_url = %feed.feed_url, "Fetching RSS feed");
 
@@ -215,9 +210,8 @@ pub async fn process_ingest_step(
     };
 
     // 5. Process items
-    let mut new_article_ids = Vec::new();
     let mut duplicate_count = 0;
-    let mut inserted_count = 0;
+    let mut articles_to_insert: Vec<RawArticle> = Vec::new();
     let now = Utc::now();
 
     for item in &items {
@@ -226,7 +220,7 @@ pub async fn process_ingest_step(
         };
 
         // a. Resolve URL
-        let resolved_url = resolve_source_url(link)
+        let resolved_url = resolve_source_url(&client, link)
             .await
             .unwrap_or_else(|| link.clone());
 
@@ -283,24 +277,18 @@ pub async fn process_ingest_step(
             updated_at: now,
         };
 
-        let article_id = article.id;
-
-        // e. Insert
-        match insert(pool, &article).await {
-            Ok(()) => {
-                new_article_ids.push(article_id);
-                inserted_count += 1;
-            }
-            Err(e) => {
-                error!(
-                    %feed_id,
-                    article_url = %resolved_url,
-                    error = %e,
-                    "Failed to insert article"
-                );
-            }
-        }
+        articles_to_insert.push(article);
     }
+
+    // e. Batch insert
+    let inserted_count = match insert_batch(pool, &articles_to_insert).await {
+        Ok(count) => count,
+        Err(e) => {
+            error!(%feed_id, error = %e, "Failed to batch insert articles");
+            0
+        }
+    };
+    let new_article_ids: Vec<Uuid> = articles_to_insert.iter().map(|a| a.id).collect();
 
     // 6. Update fetch status
     let _ = update_fetch_status(pool, feed_id, FeedFetchStatus::Success, None).await;

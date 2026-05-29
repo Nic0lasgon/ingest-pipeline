@@ -23,6 +23,16 @@ macro_rules! impl_text_enum {
             }
         }
 
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let s = serde_json::to_string(self)
+                    .unwrap_or_default()
+                    .trim_matches('"')
+                    .to_string();
+                write!(f, "{}", s)
+            }
+        }
+
         impl sqlx::Type<sqlx::Postgres> for $name {
             fn type_info() -> sqlx::postgres::PgTypeInfo {
                 <String as sqlx::Type<sqlx::Postgres>>::type_info()

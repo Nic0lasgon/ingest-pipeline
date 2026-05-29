@@ -1,5 +1,6 @@
 #![allow(clippy::await_holding_lock)]
 
+use ingest_pipeline::config::Config;
 use ingest_pipeline::db::article_queries;
 use ingest_pipeline::pipeline::content_step::process_content_step;
 use ingest_pipeline::pipeline::ingest_step::{process_ingest_step, IngestStepResult};
@@ -66,7 +67,8 @@ async fn setup_test_db(pool: &PgPool) {
             last_extraction_error       TEXT,
             last_extraction_at          TIMESTAMPTZ,
             created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
         )"#,
     )
     .execute(pool)
@@ -111,7 +113,7 @@ async fn insert_test_feed(pool: &PgPool, id: &str, feed_url: &str, name: &str) {
 
 /// Helper: run ingest, assert success, return result
 async fn run_ingest_assert_ok(pool: &PgPool, feed_id: &str) -> IngestStepResult {
-    let result = process_ingest_step(pool, feed_id, None).await;
+    let result = process_ingest_step(pool, feed_id, None, &Config::for_tests()).await;
     assert!(
         result.error.is_none(),
         "Ingest failed for {}: {:?}",
@@ -339,7 +341,8 @@ async fn test_end_to_end_pipeline() {
 
     // Step 2: take the first article and run content step
     let first_article_id = ingest_result.new_article_ids[0];
-    let content_result = process_content_step(&pool, first_article_id, None).await;
+    let content_result =
+        process_content_step(&pool, first_article_id, Some(&Config::for_tests())).await;
 
     // The content step should either:
     // - Succeed with PendingQualification (extraction worked)
@@ -411,7 +414,8 @@ async fn test_end_to_end_pipeline() {
     }
 
     // Step 3: verify idempotence — running content step again should skip
-    let content_result2 = process_content_step(&pool, first_article_id, None).await;
+    let content_result2 =
+        process_content_step(&pool, first_article_id, Some(&Config::for_tests())).await;
     // Already processed, should return quickly without error
     assert!(
         content_result2.error.is_none(),

@@ -1,13 +1,13 @@
 use anyhow::Result;
+use reqwest::Client;
 use sqlx::PgPool;
-use std::time::Duration;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::article_queries::{
-    enrich_from_duplicate, get_by_id, get_comparable_articles, update_duplicate_and_processing,
-    update_extraction, update_processing_status,
+    enrich_from_duplicate, find_similar_articles, get_by_id, get_comparable_articles,
+    update_duplicate_and_processing, update_extraction, update_processing_status,
 };
 use crate::db::rejected_queries::insert_from_article;
 use crate::db::schema::{DuplicateStatus, ProcessingStatus};
@@ -153,8 +153,17 @@ pub async fn process_content_step(
     // 3. Extraction: try strategies
     let mut extraction: Option<ExtractionResult> = None;
 
+    let default_client = Client::builder()
+        .timeout(std::time::Duration::from_millis(CONTENT_FETCH_TIMEOUT_MS))
+        .build()
+        .unwrap_or_else(|_| Client::new());
+
+    let client = config
+        .map(|c| c.http_client.client.as_ref())
+        .unwrap_or(&default_client);
+
     for strategy in STRATEGIES {
-        match fetch_with_strategy(&article.url, strategy).await {
+        match fetch_with_strategy(client, &article.url, strategy).await {
             Ok(html) => {
                 let result = extract_text(&html);
                 if result.text.len() >= MIN_TEXT_LENGTH
@@ -183,7 +192,7 @@ pub async fn process_content_step(
             if let (Some(ref url), Some(ref secret)) =
                 (&cfg.hetzner_extract_url, &cfg.hetzner_extract_secret)
             {
-                match fetch_hetzner(url, secret, &article.url).await {
+                match fetch_hetzner(&cfg.http_client.client, url, secret, &article.url).await {
                     Ok(result) => {
                         if result.text.len() >= MIN_TEXT_LENGTH
                             && count_words(&result.text) >= MIN_ARTICLE_WORD_COUNT
@@ -257,12 +266,32 @@ pub async fn process_content_step(
         };
     }
 
-    // 6. Final dedup with title_clean
+    // 6. Final dedup with title_clean (using pg_trgm index when available)
+    let final_comparable = match find_similar_articles(pool, &title_clean, article_id, 20).await {
+        Ok(c) => c,
+        Err(e) => {
+            warn!(%article_id, error = %e, "pg_trgm query failed, falling back to full scan");
+            comparable.clone()
+        }
+    };
+
+    let final_dedup_input: Vec<(String, String, Option<String>, String)> = final_comparable
+        .iter()
+        .map(|c| {
+            (
+                c.id.to_string(),
+                c.url.clone(),
+                c.canonical_url.clone(),
+                c.title.clone(),
+            )
+        })
+        .collect();
+
     let title_dup = check_duplicate(
         &article.url,
         canonical_url.as_deref(),
         &title_clean,
-        &dedup_input,
+        &final_dedup_input,
     );
     if title_dup.is_duplicate {
         let dup_id = title_dup
@@ -344,11 +373,7 @@ pub async fn process_content_step(
     }
 }
 
-async fn fetch_with_strategy(url: &str, strategy: &str) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(CONTENT_FETCH_TIMEOUT_MS))
-        .build()?;
-
+async fn fetch_with_strategy(client: &Client, url: &str, strategy: &str) -> Result<String> {
     let mut request = match strategy {
         "amp" => client.get(format!("{url}?amp=1")),
         _ => client.get(url),
@@ -381,14 +406,11 @@ async fn fetch_with_strategy(url: &str, strategy: &str) -> Result<String> {
 }
 
 async fn fetch_hetzner(
+    client: &Client,
     hetzner_url: &str,
     secret: &str,
     article_url: &str,
 ) -> Result<ExtractionResult> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(CONTENT_FETCH_TIMEOUT_MS))
-        .build()?;
-
     let body = serde_json::json!({ "url": article_url });
 
     let response = client

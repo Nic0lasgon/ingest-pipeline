@@ -7,11 +7,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::pipeline::content_step::{process_content_step, ContentStepStatus};
 
-pub async fn handle_content_job(
-    pool: &PgPool,
-    payload: Value,
-    config: Option<&Config>,
-) -> Result<()> {
+pub async fn handle_content_job(pool: &PgPool, payload: Value, config: &Config) -> Result<()> {
     // 1. Parse payload
     let article_id_str = payload
         .get("article_id")
@@ -26,7 +22,7 @@ pub async fn handle_content_job(
     info!(article_id = %article_id, run_id = ?run_id, "Starting content job");
 
     // 2. Delegate to content step
-    let result = process_content_step(pool, article_id, config).await;
+    let result = process_content_step(pool, article_id, Some(config)).await;
 
     // 3. Structured metrics log
     info!(
@@ -94,6 +90,7 @@ pub async fn handle_content_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::env;
     use std::sync::LazyLock;
     use tokio::sync::Mutex;
@@ -158,7 +155,8 @@ mod tests {
                 last_extraction_error       TEXT,
                 last_extraction_at          TIMESTAMPTZ,
                 created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
             )",
         )
         .execute(&pool)
@@ -226,7 +224,8 @@ mod tests {
         };
 
         // Empty payload → missing article_id
-        let result = handle_content_job(&pool, serde_json::json!({}), None).await;
+        let config = Config::for_tests();
+        let result = handle_content_job(&pool, serde_json::json!({}), &config).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -234,7 +233,8 @@ mod tests {
             .contains("Missing article_id"));
 
         // Non-string article_id
-        let result = handle_content_job(&pool, serde_json::json!({"article_id": 123}), None).await;
+        let result =
+            handle_content_job(&pool, serde_json::json!({"article_id": 123}), &config).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -242,8 +242,12 @@ mod tests {
             .contains("Missing article_id"));
 
         // Invalid UUID format
-        let result =
-            handle_content_job(&pool, serde_json::json!({"article_id": "not-a-uuid"}), None).await;
+        let result = handle_content_job(
+            &pool,
+            serde_json::json!({"article_id": "not-a-uuid"}),
+            &config,
+        )
+        .await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -267,7 +271,8 @@ mod tests {
 
         // Article doesn't exist → process_content_step returns ExtractionFailed(non-retryable)
         // Handler returns Ok(()) (no retry for non-retryable)
-        let result = handle_content_job(&pool, payload, None).await;
+        let config = Config::for_tests();
+        let result = handle_content_job(&pool, payload, &config).await;
         assert!(
             result.is_ok(),
             "Non-retryable missing article should return Ok"
@@ -309,7 +314,8 @@ mod tests {
         });
 
         // Already processed → process_content_step returns Extracted (idempotent skip)
-        let result = handle_content_job(&pool, payload, None).await;
+        let config = Config::for_tests();
+        let result = handle_content_job(&pool, payload, &config).await;
         assert!(result.is_ok());
     }
 }

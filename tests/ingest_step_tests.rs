@@ -2,6 +2,7 @@
 
 use chrono::Datelike;
 use httpmock::prelude::*;
+use ingest_pipeline::config::Config;
 use ingest_pipeline::pipeline::ingest_step::{process_ingest_step, IngestStepResult};
 use sqlx::PgPool;
 use std::env;
@@ -65,7 +66,8 @@ async fn setup_test_db(pool: &PgPool) {
             last_extraction_error       TEXT,
             last_extraction_at          TIMESTAMPTZ,
             created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
         )"#,
     )
     .execute(pool)
@@ -142,7 +144,7 @@ async fn test_ingest_step_success() {
 
     insert_test_feed(&pool, "test-feed", &feed_url, true).await;
 
-    let result = process_ingest_step(&pool, "test-feed", None).await;
+    let result = process_ingest_step(&pool, "test-feed", None, &Config::for_tests()).await;
 
     assert!(
         result.error.is_none(),
@@ -186,11 +188,11 @@ async fn test_ingest_step_duplicate_skip() {
 
     insert_test_feed(&pool, "test-feed-dup", &feed_url, true).await;
 
-    let result1 = process_ingest_step(&pool, "test-feed-dup", None).await;
+    let result1 = process_ingest_step(&pool, "test-feed-dup", None, &Config::for_tests()).await;
     assert!(result1.error.is_none());
     assert_eq!(result1.inserted_count, 3);
 
-    let result2 = process_ingest_step(&pool, "test-feed-dup", None).await;
+    let result2 = process_ingest_step(&pool, "test-feed-dup", None, &Config::for_tests()).await;
     assert!(result2.error.is_none());
     assert_eq!(result2.inserted_count, 0);
     assert_eq!(result2.duplicate_count, 3);
@@ -220,7 +222,7 @@ async fn test_ingest_step_cutoff_date() {
 
     set_cutoff_date(&pool, "test-feed-cutoff", "2024-02-01T00:00:00Z").await;
 
-    let result = process_ingest_step(&pool, "test-feed-cutoff", None).await;
+    let result = process_ingest_step(&pool, "test-feed-cutoff", None, &Config::for_tests()).await;
 
     assert!(
         result.error.is_none(),
@@ -266,7 +268,7 @@ async fn test_ingest_step_network_error() {
 
     insert_test_feed(&pool, "test-feed-timeout", &feed_url, true).await;
 
-    let result = process_ingest_step(&pool, "test-feed-timeout", None).await;
+    let result = process_ingest_step(&pool, "test-feed-timeout", None, &Config::for_tests()).await;
 
     assert!(result.error.is_some(), "expected an error for timeout");
     assert!(
@@ -309,7 +311,8 @@ async fn test_ingest_step_malformed_xml() {
 
     insert_test_feed(&pool, "test-feed-malformed", &feed_url, true).await;
 
-    let result = process_ingest_step(&pool, "test-feed-malformed", None).await;
+    let result =
+        process_ingest_step(&pool, "test-feed-malformed", None, &Config::for_tests()).await;
 
     assert!(result.error.is_some(), "expected parse error");
     assert!(
@@ -336,7 +339,7 @@ async fn test_ingest_step_disabled_feed() {
     )
     .await;
 
-    let result = process_ingest_step(&pool, "test-feed-disabled", None).await;
+    let result = process_ingest_step(&pool, "test-feed-disabled", None, &Config::for_tests()).await;
 
     assert!(result.error.is_some());
     assert!(!result.retryable);
@@ -353,7 +356,7 @@ async fn test_ingest_step_nonexistent_feed() {
     };
     setup_test_db(&pool).await;
 
-    let result = process_ingest_step(&pool, "nonexistent-feed", None).await;
+    let result = process_ingest_step(&pool, "nonexistent-feed", None, &Config::for_tests()).await;
 
     assert!(result.error.is_some());
     assert!(!result.retryable);
@@ -380,7 +383,7 @@ async fn test_ingest_step_http_404() {
 
     insert_test_feed(&pool, "test-feed-404", &feed_url, true).await;
 
-    let result = process_ingest_step(&pool, "test-feed-404", None).await;
+    let result = process_ingest_step(&pool, "test-feed-404", None, &Config::for_tests()).await;
 
     assert!(result.error.is_some());
     assert!(!result.retryable, "404 should not be retryable");
@@ -408,7 +411,7 @@ async fn test_ingest_step_max_pub_date() {
 
     insert_test_feed(&pool, "test-feed-maxdate", &feed_url, true).await;
 
-    let result = process_ingest_step(&pool, "test-feed-maxdate", None).await;
+    let result = process_ingest_step(&pool, "test-feed-maxdate", None, &Config::for_tests()).await;
 
     assert!(result.error.is_none());
     assert!(result.max_pub_date.is_some());

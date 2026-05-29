@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::db::feed_queries::update_last_ingested_pub_date;
 use crate::pipeline::ingest_step::process_ingest_step;
 use crate::queue::jobs::create_job;
@@ -7,7 +8,7 @@ use sqlx::PgPool;
 use tracing::{error, info};
 use uuid::Uuid;
 
-pub async fn handle_ingest_job(pool: &PgPool, payload: Value) -> Result<()> {
+pub async fn handle_ingest_job(pool: &PgPool, payload: Value, config: &Config) -> Result<()> {
     let feed_id = payload
         .get("feed_id")
         .and_then(|v| v.as_str())
@@ -19,7 +20,7 @@ pub async fn handle_ingest_job(pool: &PgPool, payload: Value) -> Result<()> {
 
     info!(feed_id = %feed_id, "Starting ingest job");
 
-    let result = process_ingest_step(pool, feed_id, run_id).await;
+    let result = process_ingest_step(pool, feed_id, run_id, config).await;
 
     if result.error.is_none() {
         info!(
@@ -70,6 +71,7 @@ pub async fn handle_ingest_job(pool: &PgPool, payload: Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use sqlx::PgPool;
     use std::env;
     use std::sync::LazyLock;
@@ -137,7 +139,8 @@ mod tests {
                 last_extraction_error       TEXT,
                 last_extraction_at          TIMESTAMPTZ,
                 created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
             )",
         )
         .execute(&pool)
@@ -187,7 +190,7 @@ mod tests {
             None => return,
         };
 
-        let result = handle_ingest_job(&pool, serde_json::json!({})).await;
+        let result = handle_ingest_job(&pool, serde_json::json!({}), &Config::for_tests()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Missing feed_id"));
     }
@@ -200,7 +203,12 @@ mod tests {
             None => return,
         };
 
-        let result = handle_ingest_job(&pool, serde_json::json!({"other_field": "value"})).await;
+        let result = handle_ingest_job(
+            &pool,
+            serde_json::json!({"other_field": "value"}),
+            &Config::for_tests(),
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -212,8 +220,12 @@ mod tests {
             None => return,
         };
 
-        let result =
-            handle_ingest_job(&pool, serde_json::json!({"feed_id": "nonexistent-feed"})).await;
+        let result = handle_ingest_job(
+            &pool,
+            serde_json::json!({"feed_id": "nonexistent-feed"}),
+            &Config::for_tests(),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -237,8 +249,12 @@ mod tests {
         .await
         .unwrap();
 
-        let result =
-            handle_ingest_job(&pool, serde_json::json!({"feed_id": "disabled-feed"})).await;
+        let result = handle_ingest_job(
+            &pool,
+            serde_json::json!({"feed_id": "disabled-feed"}),
+            &Config::for_tests(),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -259,6 +275,7 @@ mod tests {
                 "feed_id": "some-feed",
                 "run_id": run_id.to_string()
             }),
+            &Config::for_tests(),
         )
         .await;
 

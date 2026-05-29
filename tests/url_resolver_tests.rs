@@ -1,6 +1,15 @@
 use httpmock::Method;
 use httpmock::MockServer;
 use ingest_pipeline::utils::url_resolver::{resolve_source_url, resolve_url_unchecked};
+use reqwest::Client;
+
+fn test_client() -> Client {
+    Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .unwrap()
+}
 
 #[tokio::test]
 async fn test_resolve_tco_redirect() {
@@ -11,7 +20,8 @@ async fn test_resolve_tco_redirect() {
             .header("Location", "https://example.com/article");
     });
 
-    let result = resolve_url_unchecked(&format!("{}/abc123", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/abc123", server.base_url())).await;
     assert_eq!(result, Some("https://example.com/article".to_string()));
     mock.assert();
 }
@@ -35,7 +45,8 @@ async fn test_resolve_bitly_redirect() {
         then.status(200).body("<html><body>Final</body></html>");
     });
 
-    let result = resolve_url_unchecked(&format!("{}/xyz789", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/xyz789", server.base_url())).await;
     assert_eq!(result, Some(format!("{}/dest", server.base_url())));
 }
 
@@ -60,7 +71,12 @@ async fn test_resolve_google_news_meta_refresh() {
         then.status(200).body(html);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/rss/articles/CBminQ", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(
+        &client,
+        &format!("{}/rss/articles/CBminQ", server.base_url()),
+    )
+    .await;
     assert_eq!(
         result,
         Some("https://www.lemonde.fr/politique/article/2024/01/01/title_123.html".to_string())
@@ -84,7 +100,8 @@ async fn test_resolve_meta_refresh_content_first() {
         then.status(200).body(html);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/r", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/r", server.base_url())).await;
     assert_eq!(result, Some("https://example.com/redirect".to_string()));
 }
 
@@ -109,7 +126,8 @@ async fn test_resolve_canonical() {
         then.status(200).body(html);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/short", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/short", server.base_url())).await;
     assert_eq!(
         result,
         Some("https://www.example.com/full-article-title".to_string())
@@ -130,7 +148,8 @@ async fn test_resolve_canonical_href_first() {
         then.status(200).body(html);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/c", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/c", server.base_url())).await;
     assert_eq!(
         result,
         Some("https://example.com/canonical-page".to_string())
@@ -139,13 +158,15 @@ async fn test_resolve_canonical_href_first() {
 
 #[tokio::test]
 async fn test_resolve_no_redirect_for_normal_domain() {
-    let result = resolve_source_url("https://example.com/article").await;
+    let client = test_client();
+    let result = resolve_source_url(&client, "https://example.com/article").await;
     assert_eq!(result, None);
 }
 
 #[tokio::test]
 async fn test_resolve_no_redirect_for_lemonde() {
-    let result = resolve_source_url("https://www.lemonde.fr/politique/article.html").await;
+    let client = test_client();
+    let result = resolve_source_url(&client, "https://www.lemonde.fr/politique/article.html").await;
     assert_eq!(result, None);
 }
 
@@ -157,7 +178,8 @@ async fn test_resolve_timeout_returns_none() {
         then.status(200).delay(std::time::Duration::from_secs(10));
     });
 
-    let result = resolve_url_unchecked(&format!("{}/timeout", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/timeout", server.base_url())).await;
     assert_eq!(result, None);
 }
 
@@ -173,7 +195,8 @@ async fn test_resolve_404_returns_none() {
         then.status(404);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/notfound", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/notfound", server.base_url())).await;
     assert_eq!(result, None);
 }
 
@@ -189,7 +212,8 @@ async fn test_resolve_500_returns_none() {
         then.status(500);
     });
 
-    let result = resolve_url_unchecked(&format!("{}/error", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/error", server.base_url())).await;
     assert_eq!(result, None);
 }
 
@@ -208,7 +232,8 @@ async fn test_resolve_head_fails_get_redirect_works() {
             .header("Location", "https://example.com/final");
     });
 
-    let result = resolve_url_unchecked(&format!("{}/article", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/article", server.base_url())).await;
     assert_eq!(result, Some("https://example.com/final".to_string()));
 }
 
@@ -228,7 +253,8 @@ async fn test_resolve_chained_redirect() {
             .header("Location", "https://example.com/final");
     });
 
-    let result = resolve_url_unchecked(&format!("{}/step1", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/step1", server.base_url())).await;
     assert_eq!(result, Some("https://example.com/final".to_string()));
 }
 
@@ -246,6 +272,7 @@ async fn test_resolve_head_no_redirect_get_no_redirect_no_content() {
             .body("<html><body>No redirect info</body></html>");
     });
 
-    let result = resolve_url_unchecked(&format!("{}/plain", server.base_url())).await;
+    let client = test_client();
+    let result = resolve_url_unchecked(&client, &format!("{}/plain", server.base_url())).await;
     assert_eq!(result, None);
 }

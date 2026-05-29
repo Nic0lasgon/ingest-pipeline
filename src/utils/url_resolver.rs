@@ -49,7 +49,8 @@ fn is_shortener_domain(url: &str) -> bool {
     false
 }
 
-fn build_client() -> Client {
+#[allow(dead_code)]
+fn build_resolver_client() -> Client {
     Client::builder()
         .timeout(TIMEOUT)
         .redirect(Policy::limited(10))
@@ -74,19 +75,18 @@ fn extract_canonical(html: &str) -> Option<String> {
 }
 
 fn resolve_recursive<'a>(
+    client: &'a Client,
     url: &'a str,
     depth: u32,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
-    Box::pin(async move { resolve_recursive_inner(url, depth).await })
+    Box::pin(async move { resolve_recursive_inner(client, url, depth).await })
 }
 
-async fn resolve_recursive_inner(url: &str, depth: u32) -> Option<String> {
+async fn resolve_recursive_inner(client: &Client, url: &str, depth: u32) -> Option<String> {
     if depth >= MAX_DEPTH {
         debug!(url, depth, "max recursion depth reached");
         return None;
     }
-
-    let client = build_client();
 
     // Strategy 1: HEAD request — reqwest follows redirects automatically
     if let Ok(resp) = client.head(url).send().await {
@@ -132,7 +132,7 @@ async fn resolve_recursive_inner(url: &str, depth: u32) -> Option<String> {
     if let Some(refresh_url) = extract_meta_refresh(&body) {
         debug!(from = url, to = %refresh_url, "found meta refresh");
         return Some(
-            resolve_recursive(&refresh_url, depth + 1)
+            resolve_recursive(client, &refresh_url, depth + 1)
                 .await
                 .unwrap_or(refresh_url),
         );
@@ -147,15 +147,15 @@ async fn resolve_recursive_inner(url: &str, depth: u32) -> Option<String> {
     None
 }
 
-pub async fn resolve_source_url(url: &str) -> Option<String> {
+pub async fn resolve_source_url(client: &Client, url: &str) -> Option<String> {
     if !is_shortener_domain(url) {
         return None;
     }
-    resolve_recursive(url, 0).await
+    resolve_recursive(client, url, 0).await
 }
 
-pub async fn resolve_url_unchecked(url: &str) -> Option<String> {
-    resolve_recursive(url, 0).await
+pub async fn resolve_url_unchecked(client: &Client, url: &str) -> Option<String> {
+    resolve_recursive(client, url, 0).await
 }
 
 #[cfg(test)]

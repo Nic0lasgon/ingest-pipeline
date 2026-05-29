@@ -1,6 +1,7 @@
 #![allow(clippy::await_holding_lock)]
 
 use httpmock::prelude::*;
+use ingest_pipeline::config::Config;
 use ingest_pipeline::pipeline::content_step::{process_content_step, ContentStepStatus};
 use sqlx::PgPool;
 use std::env;
@@ -92,7 +93,8 @@ async fn setup_test_db(pool: &PgPool) {
             last_extraction_error       TEXT,
             last_extraction_at          TIMESTAMPTZ,
             created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+            updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
         )"#,
     )
     .execute(pool)
@@ -198,7 +200,7 @@ async fn test_content_step_success() {
     )
     .await;
 
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     assert_eq!(
         result.status,
@@ -255,7 +257,7 @@ async fn test_content_step_too_short() {
     )
     .await;
 
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     assert_eq!(
         result.status,
@@ -319,7 +321,7 @@ async fn test_content_step_duplicate_url() {
     )
     .await;
 
-    let result = process_content_step(&pool, new_id, None).await;
+    let result = process_content_step(&pool, new_id, Some(&Config::for_tests())).await;
 
     assert_eq!(
         result.status,
@@ -361,7 +363,7 @@ async fn test_content_step_strategies() {
     )
     .await;
 
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     assert_eq!(
         result.status,
@@ -396,7 +398,7 @@ async fn test_content_step_network_error() {
     )
     .await;
 
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     assert_eq!(
         result.status,
@@ -431,7 +433,7 @@ async fn test_content_step_already_processed() {
     )
     .await;
 
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     // Should be skipped (returns Extracted status as a "no-op")
     assert_eq!(
@@ -454,7 +456,7 @@ async fn test_content_step_not_found() {
     setup_test_db(&pool).await;
 
     let article_id = uuid::Uuid::new_v4();
-    let result = process_content_step(&pool, article_id, None).await;
+    let result = process_content_step(&pool, article_id, Some(&Config::for_tests())).await;
 
     assert_eq!(result.status, ContentStepStatus::ExtractionFailed);
     assert_eq!(result.error.as_deref(), Some("not_found"));

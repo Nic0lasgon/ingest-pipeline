@@ -67,6 +67,76 @@ pub async fn insert(pool: &PgPool, article: &RawArticle) -> Result<()> {
     Ok(())
 }
 
+/// Insert multiple articles in a single query using UNNEST
+/// Much faster than individual inserts (10-50x)
+pub async fn insert_batch(pool: &PgPool, articles: &[RawArticle]) -> Result<usize> {
+    if articles.is_empty() {
+        return Ok(0);
+    }
+
+    let ids: Vec<Uuid> = articles.iter().map(|a| a.id).collect();
+    let source_ids: Vec<String> = articles.iter().map(|a| a.source_id.clone()).collect();
+    let titles: Vec<String> = articles.iter().map(|a| a.title.clone()).collect();
+    let urls: Vec<String> = articles.iter().map(|a| a.url.clone()).collect();
+    let descriptions: Vec<Option<String>> =
+        articles.iter().map(|a| a.description.clone()).collect();
+    let image_urls: Vec<Option<String>> = articles.iter().map(|a| a.image_url.clone()).collect();
+    let authors: Vec<Option<String>> = articles.iter().map(|a| a.author.clone()).collect();
+    let pub_dates: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+        articles.iter().map(|a| a.pub_date).collect();
+    let processing_statuses: Vec<String> = articles
+        .iter()
+        .map(|a| a.processing_status.to_string())
+        .collect();
+    let quality_statuses: Vec<String> = articles
+        .iter()
+        .map(|a| a.quality_status.to_string())
+        .collect();
+    let duplicate_statuses: Vec<String> = articles
+        .iter()
+        .map(|a| a.duplicate_status.to_string())
+        .collect();
+    let now = chrono::Utc::now();
+    let created_ats: Vec<chrono::DateTime<chrono::Utc>> =
+        (0..articles.len()).map(|_| now).collect();
+    let updated_ats: Vec<chrono::DateTime<chrono::Utc>> =
+        (0..articles.len()).map(|_| now).collect();
+
+    let rows_affected = sqlx::query(
+        "INSERT INTO raw_articles (
+            id, source_id, title, url, description, image_url,
+            author, pub_date, processing_status, quality_status,
+            duplicate_status, created_at, updated_at
+        )
+        SELECT * FROM UNNEST(
+            $1::uuid[], $2::text[], $3::text[], $4::text[],
+            $5::text[], $6::text[], $7::text[], $8::timestamptz[],
+            $9::text[], $10::text[], $11::text[],
+            $12::timestamptz[], $13::timestamptz[]
+        )
+        ON CONFLICT (url, source_id) DO NOTHING",
+    )
+    .bind(&ids)
+    .bind(&source_ids)
+    .bind(&titles)
+    .bind(&urls)
+    .bind(&descriptions)
+    .bind(&image_urls)
+    .bind(&authors)
+    .bind(&pub_dates)
+    .bind(&processing_statuses)
+    .bind(&quality_statuses)
+    .bind(&duplicate_statuses)
+    .bind(&created_ats)
+    .bind(&updated_ats)
+    .execute(pool)
+    .await
+    .context("Failed to batch insert articles")?
+    .rows_affected();
+
+    Ok(rows_affected as usize)
+}
+
 pub async fn update_processing_status(
     pool: &PgPool,
     article_id: Uuid,
@@ -194,6 +264,31 @@ pub async fn get_comparable_articles(
     .context("get_comparable_articles: failed to query raw_articles")
 }
 
+pub async fn find_similar_articles(
+    pool: &PgPool,
+    title_clean: &str,
+    exclude_id: Uuid,
+    limit: i64,
+) -> Result<Vec<ComparableArticle>> {
+    sqlx::query_as::<_, ComparableArticle>(
+        r#"
+        SELECT id, url, canonical_url, title, title_clean
+        FROM raw_articles
+        WHERE id != $1
+          AND title_clean % $2
+          AND processing_status IN ('ingested', 'extracted', 'pending_qualification', 'qualified')
+        ORDER BY similarity(title_clean, $2) DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(exclude_id)
+    .bind(title_clean)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+    .context("find_similar_articles: failed to query raw_articles")
+}
+
 pub async fn cleanup_old_duplicates(pool: &PgPool, days: i32) -> Result<i64> {
     let result = sqlx::query_scalar::<_, i64>(
         r#"WITH deleted AS (
@@ -293,7 +388,8 @@ mod tests {
                 last_extraction_error       TEXT,
                 last_extraction_at          TIMESTAMPTZ,
                 created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
+                updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT unique_raw_articles_url_source UNIQUE (url, source_id)
             )",
         )
         .execute(&pool)
