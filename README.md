@@ -586,6 +586,49 @@ cargo sqlx migrate run
 - **PRD** : `Documentation/INGEST_PIPELINE_PRD.md` (spécifications complètes)
 - **Spec originale** : `Documentation/INGEST_PIPELINE_SPEC.md` (logique TypeScript originale)
 - **Repository** : https://github.com/Nic0lasgon/ingest-pipeline
+- **Vox_rag** (module aval) : `../Vox_rag/`
+
+## Intégration avec Vox_rag
+
+L'`ingest-pipeline` produit des articles qualifiés (`quality_status='qualified'`) qui sont ensuite importés dans `Vox_rag` pour l'embedding et le topic tracking.
+
+### Flux complet
+
+```
+RSS/Atom/JSON Feed
+  ↓
+ingest-pipeline: fetch → parse → extract → dedup → qualify
+  ↓
+raw_articles (quality_status='qualified')
+  ↓
+import vers Vox_rag (scripts/import_from_ingest.sh)
+  ↓
+Vox_rag: embedding Octen → similarité → topics → LLM
+```
+
+### Variables d'environnement partagées
+
+| Variable | ingest-pipeline | Vox_rag | Description |
+|---|---|---|---|
+| `DATABASE_URL` | Port 5432 | Port 5433 | Bases séparées |
+| `HETZNER_EXTRACT_URL` | Oui | Non | Extraction contenu |
+| `HETZNER_EXTRACT_SECRET` | Oui | Non | Clé API Scrapling |
+| `OCTEN_API_KEY` | Non | Oui | Clé API embedding |
+| `LLM_API_KEY` | Non | Oui | Clé API DeepSeek |
+
+### Scrapling (extraction contenu)
+
+Le serveur Scrapling Hetzner est utilisé comme fallback d'extraction quand les 5 stratégies HTTP échouent (sites JavaScript-rendered).
+
+**API** :
+```bash
+curl -X POST "https://search.myswearpod.de/extract" \
+  -H "Authorization: Bearer <HETZNER_EXTRACT_SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "...", "stealth": true, "format": "txt"}'
+```
+
+**Cas d'usage** : Euronews, RFI et autres sites qui rendent le contenu en JavaScript. Les descriptions RSS font 30-60 mots (en dessous du seuil de 80 mots pour l'embedding), donc l'extraction du contenu complet est nécessaire.
 
 ## Changelog
 
