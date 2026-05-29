@@ -25,5 +25,22 @@ url = "2"
 mimalloc = "0.1"
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 httpmock = "0.7"
 tokio-test = "0.4"
+
+[[bench]]
+name = "bench_insert"
+harness = false
+
+[[bench]]
+name = "bench_dedup"
+harness = false
+
+[[bench]]
+name = "bench_extract"
+harness = false
+
+[[bench]]
+name = "bench_ingest"
+harness = false
