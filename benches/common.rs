@@ -1,6 +1,4 @@
-use ingest_pipeline::db::schema::{
-    DuplicateStatus, ProcessingStatus, QualityStatus, RawArticle,
-};
+use ingest_pipeline::db::schema::{DuplicateStatus, ProcessingStatus, QualityStatus, RawArticle};
 use sqlx::PgPool;
 
 pub async fn setup_test_pool() -> Option<PgPool> {

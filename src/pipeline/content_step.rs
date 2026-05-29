@@ -12,7 +12,7 @@ use crate::db::article_queries::{
 use crate::db::rejected_queries::insert_from_article;
 use crate::db::schema::{DuplicateStatus, ProcessingStatus};
 use crate::utils::dedup::check_duplicate;
-use crate::utils::text_extract::{extract_text, ExtractionResult};
+use crate::utils::text_extract::{clean_with_trafilatura, extract_text, ExtractionResult};
 use crate::utils::word_count::{count_words, MIN_ARTICLE_WORD_COUNT};
 
 pub const CONTENT_FETCH_TIMEOUT_MS: u64 = 15_000;
@@ -165,7 +165,9 @@ pub async fn process_content_step(
     for strategy in STRATEGIES {
         match fetch_with_strategy(client, &article.url, strategy).await {
             Ok(html) => {
-                let result = extract_text(&html);
+                let regex_result = extract_text(&html);
+                let result =
+                    clean_with_trafilatura(&html, Some(&article.url)).unwrap_or(regex_result);
                 if result.text.len() >= MIN_TEXT_LENGTH
                     && count_words(&result.text) >= MIN_ARTICLE_WORD_COUNT
                 {
@@ -193,13 +195,17 @@ pub async fn process_content_step(
                 (&cfg.hetzner_extract_url, &cfg.hetzner_extract_secret)
             {
                 match fetch_hetzner(&cfg.http_client.client, url, secret, &article.url).await {
-                    Ok(result) => {
+                    Ok(html) => {
+                        let regex_result = extract_text(&html);
+                        let result = clean_with_trafilatura(&html, Some(&article.url))
+                            .unwrap_or(regex_result);
                         if result.text.len() >= MIN_TEXT_LENGTH
                             && count_words(&result.text) >= MIN_ARTICLE_WORD_COUNT
                         {
                             info!(
                                 %article_id,
                                 text_len = result.text.len(),
+                                word_count = count_words(&result.text),
                                 "Hetzner extraction succeeded"
                             );
                             extraction = Some(result);
@@ -410,7 +416,7 @@ async fn fetch_hetzner(
     hetzner_url: &str,
     secret: &str,
     article_url: &str,
-) -> Result<ExtractionResult> {
+) -> Result<String> {
     let body = serde_json::json!({ "url": article_url });
 
     let response = client
@@ -430,7 +436,7 @@ async fn fetch_hetzner(
         .or_else(|| json["html"].as_str())
         .ok_or_else(|| anyhow::anyhow!("No content in Hetzner response"))?;
 
-    Ok(extract_text(html))
+    Ok(html.to_string())
 }
 
 #[cfg(test)]

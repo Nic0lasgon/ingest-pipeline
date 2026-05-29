@@ -295,6 +295,49 @@ pub fn clean_title(title: &str) -> String {
     title.trim().to_string()
 }
 
+pub fn clean_with_trafilatura(html: &str, url: Option<&str>) -> Option<ExtractionResult> {
+    use rs_trafilatura::{extract_with_options, Options};
+
+    let options = Options {
+        favor_precision: true,
+        deduplicate: true,
+        max_link_density: 0.5,
+        url: url.map(|s| s.to_string()),
+        include_tables: true,
+        include_comments: false,
+        include_images: false,
+        include_links: false,
+        include_formatting: false,
+        use_fallback_extraction: true,
+        ..Options::default()
+    };
+
+    match extract_with_options(html, &options) {
+        Ok(result) => {
+            let text = result.content_text.trim().to_string();
+            if text.is_empty() {
+                return None;
+            }
+            if result.extraction_quality < 0.3 {
+                return None;
+            }
+            let canonical_url = result.metadata.url.or_else(|| extract_metadata(html).0);
+            let title_clean = result
+                .metadata
+                .title
+                .as_deref()
+                .map(clean_title)
+                .or_else(|| extract_metadata(html).1);
+            Some(ExtractionResult {
+                text,
+                canonical_url,
+                title_clean,
+            })
+        }
+        Err(_) => None,
+    }
+}
+
 /// Extract clean text from HTML.
 pub fn extract_text(html: &str) -> ExtractionResult {
     let (canonical_url, title_clean) = extract_metadata(html);

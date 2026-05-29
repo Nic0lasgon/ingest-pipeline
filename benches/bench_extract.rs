@@ -6,7 +6,9 @@ const ARTICLE_NOISY: &str = include_str!("../tests/fixtures/html/article_noisy.h
 const ARTICLE_SHORT: &str = include_str!("../tests/fixtures/html/article_short.html");
 
 fn generate_large_html(paragraphs: usize) -> String {
-    let mut html = String::from("<!DOCTYPE html><html><head><title>Large Article</title></head><body><article>");
+    let mut html = String::from(
+        "<!DOCTYPE html><html><head><title>Large Article</title></head><body><article>",
+    );
     for i in 0..paragraphs {
         html.push_str(&format!(
             "<p>Paragraph number {} of the large article. \
@@ -24,17 +26,11 @@ fn generate_large_html(paragraphs: usize) -> String {
 fn bench_extract_real_fixtures(c: &mut Criterion) {
     let mut group = c.benchmark_group("extract_text");
 
-    group.bench_function("article_clean", |b| {
-        b.iter(|| extract_text(ARTICLE_CLEAN))
-    });
+    group.bench_function("article_clean", |b| b.iter(|| extract_text(ARTICLE_CLEAN)));
 
-    group.bench_function("article_noisy", |b| {
-        b.iter(|| extract_text(ARTICLE_NOISY))
-    });
+    group.bench_function("article_noisy", |b| b.iter(|| extract_text(ARTICLE_NOISY)));
 
-    group.bench_function("article_short", |b| {
-        b.iter(|| extract_text(ARTICLE_SHORT))
-    });
+    group.bench_function("article_short", |b| b.iter(|| extract_text(ARTICLE_SHORT)));
 
     group.finish();
 }

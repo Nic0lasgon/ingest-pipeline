@@ -76,21 +76,17 @@ fn bench_batch_scaling(c: &mut Criterion) {
         let counter = AtomicU32::new(0);
         let pool_s = pool.clone();
         let sid = source_id.clone();
-        group.bench_with_input(
-            BenchmarkId::new("batch_insert", size),
-            &size,
-            |b, &size| {
-                b.iter(|| {
-                    let batch = counter.fetch_add(1, Ordering::Relaxed);
-                    let articles: Vec<_> = (0..size)
-                        .map(|i| make_test_article(&sid, batch, i as u32))
-                        .collect();
-                    rt.block_on(async {
-                        insert_batch(&pool_s, &articles).await.unwrap();
-                    })
+        group.bench_with_input(BenchmarkId::new("batch_insert", size), &size, |b, &size| {
+            b.iter(|| {
+                let batch = counter.fetch_add(1, Ordering::Relaxed);
+                let articles: Vec<_> = (0..size)
+                    .map(|i| make_test_article(&sid, batch, i as u32))
+                    .collect();
+                rt.block_on(async {
+                    insert_batch(&pool_s, &articles).await.unwrap();
                 })
-            },
-        );
+            })
+        });
     }
 
     group.finish();

@@ -1,19 +1,30 @@
-# MyPod Ingestion Pipeline — Rust Rewrite
+# ingest-pipeline — Pipeline d'ingestion RSS
 
-Pipeline d'ingestion RSS pour MyPod, réécrit en Rust. Remplace la stack Cloudflare Workers/D1/Queues par une architecture **Axum + PostgreSQL + Job Queue maison**.
+Pipeline d'ingestion RSS/Atom/JSON Feed pour VoxPod, écrit en Rust. Récupère les flux, extrait le contenu HTML des articles, détecte les doublons, et qualifie les articles pour le traitement aval par **Vox\_rag** (embedding + topics).
 
-## Vue d'ensemble
+## Stack technique
 
-Ce projet ingère des flux RSS/Atom/JSON Feed, extrait le contenu HTML des articles, détecte les doublons, et les qualifie pour l'étape éditoriale (hors scope v1).
-
-**Stack technique** :
-- **Runtime** : Rust + Tokio
-- **Web** : Axum
-- **Database** : PostgreSQL + sqlx
-- **Queue** : PostgreSQL (`SELECT FOR UPDATE SKIP LOCKED` + `LISTEN/NOTIFY`)
-- **Déploiement** : Docker Compose (local) → VPS/Railway/Fly.io (prod)
+| Composant | Technologie |
+|---|---|
+| Runtime | Rust + Tokio |
+| HTTP | Axum |
+| Base de données | PostgreSQL + sqlx (runtime queries, pas de compile-time macros) |
+| Job queue | PostgreSQL (`SELECT FOR UPDATE SKIP LOCKED` + `LISTEN/NOTIFY`) |
+| Extraction HTML | rs-trafilatura (primaire) + regex (fallback) |
+| Déploiement | Docker Compose (local), VPS ou Railway/Fly.io (prod) |
 
 ## Architecture
+
+### Pipeline de données
+
+```
+Scheduler (cron 4h)
+  └─> Crée un pipeline_run
+      └─> Crée des jobs fetch_feed (un par source RSS)
+          └─> Worker ingère le flux RSS → parse → insert articles
+              └─> Crée des jobs process_article
+                  └─> Worker fetch HTML → rs-trafilatura → validation (≥300 chars, ≥350 mots) → dédup → qualifié
+```
 
 ### Modes de lancement
 
@@ -24,70 +35,48 @@ cargo run -- scheduler  # Scheduler des tâches récurrentes uniquement
 cargo run -- all        # API + scheduler + worker ensemble (dev local)
 ```
 
-### Flux de données
-
-```
-Scheduler (cron 4h)
-  └─> Crée un pipeline_run
-      └─> Crée des jobs fetch_feed (un par source RSS)
-          └─> Worker ingère le flux RSS
-              └─> Crée des jobs process_article
-                  └─> Worker extrait le contenu HTML
-                      └─> Article qualifié (pending_qualification)
-```
-
-### Structure du projet
+## Structure du projet
 
 ```
 ingest-pipeline/
 ├── src/
-│   ├── main.rs              # Entry point + CLI (clap) + mode dispatch
+│   ├── main.rs              # Entry point + CLI (clap)
 │   ├── config.rs            # Configuration par variables d'environnement
 │   ├── lib.rs               # Exports pour les tests
-│   ├── db/                  # Couche d'accès aux données
-│   │   ├── schema.rs        # Types Rust ↔ PostgreSQL (structs + enums)
-│   │   ├── feed_queries.rs  # Queries pour feed_sources
-│   │   ├── article_queries.rs # Queries pour raw_articles
-│   │   ├── run_queries.rs   # Queries pour pipeline_runs / step_runs
-│   │   └── rejected_queries.rs # Queries pour rejected_articles
-│   ├── queue/               # Job Queue PostgreSQL
+│   ├── db/
+│   │   ├── schema.rs        # Types Rust ↔ PostgreSQL
+│   │   ├── feed_queries.rs  # Queries feed_sources
+│   │   ├── article_queries.rs # Queries raw_articles
+│   │   ├── run_queries.rs   # Queries pipeline_runs / step_runs
+│   │   ├── job_queries.rs   # Queries jobs
+│   │   └── rejected_queries.rs # Queries rejected_articles
+│   ├── queue/
 │   │   ├── jobs.rs          # CRUD jobs + SKIP LOCKED
 │   │   └── worker.rs        # Boucle worker (poll + dispatch + retry)
-│   ├── pipeline/            # Logique métier du pipeline
-│   │   ├── ingest_step.rs   # Fetch RSS → parse → insert articles
-│   │   └── content_step.rs  # Extract HTML → validate → qualify
-│   ├── utils/               # Utilitaires purs (pas de DB)
-│   │   ├── rss_parser.rs    # Parser RSS/Atom/JSON sans dépendances externes
-│   │   ├── text_extract.rs  # Extraction texte HTML sans DOM
-│   │   ├── dedup.rs         # Déduplication par URL + Jaccard 80%
-│   │   ├── url_resolver.rs  # Résolution des URLs raccourcies
+│   ├── pipeline/
+│   │   ├── ingest_step.rs   # Fetch RSS → parse → insert
+│   │   └── content_step.rs  # Fetch HTML → extract → validate → qualify
+│   ├── utils/
+│   │   ├── rss_parser.rs    # Parser RSS/Atom/JSON (sans dépendance externe)
+│   │   ├── text_extract.rs  # Extraction texte (rs-trafilatura + regex fallback)
+│   │   ├── dedup.rs         # Déduplication URL + Jaccard titre
+│   │   ├── url_resolver.rs  # Résolution URLs raccourcies
 │   │   ├── word_count.rs    # Compteur de mots
-│   │   └── shared.rs        # Décodage HTML entities + parse JSON safe
-│   ├── workers/             # Handlers de jobs
+│   │   └── shared.rs        # HTML entities + parse JSON safe
+│   ├── workers/
 │   │   ├── ingest_worker.rs # Handler fetch_feed
 │   │   ├── content_worker.rs # Handler process_article
-│   │   └── scheduler.rs     # Cron scheduler (4h)
-│   └── api/                 # HTTP API
+│   │   └── scheduler.rs     # Cron scheduler
+│   └── api/
 │       └── mod.rs           # Routes Axum (/health)
 ├── migrations/              # Migrations sqlx
 │   ├── 0001_initial_schema.sql
 │   ├── 0002_jobs_table.sql
 │   ├── 0003_indexes.sql
 │   ├── 0004_pg_trgm_index.sql    # Index GIN trigram pour dédup
-│   └── 0005_unique_url_source.sql # Contrainte UNIQUE pour batch insert
-├── benches/                 # Benchmarks de performance
-│   ├── bench_insert.rs      # Batch vs individual insert
-│   ├── bench_dedup.rs       # Déduplication (Jaccard)
-│   ├── bench_extract.rs     # Extraction HTML
-│   ├── bench_ingest.rs      # Pipeline complet
-│   └── common.rs            # Helpers partagés
-├── OPTIMIZATION_PLAN.md     # Plan d'optimisation détaillé
-├── BENCHMARK_METHODOLOGY.md # Méthodologie scientifique des benchmarks
+│   └── 0005_unique_url_source.sql # Contrainte UNIQUE (url, source_id)
+├── benches/                 # Benchmarks Criterion
 ├── tests/                   # Tests d'intégration + fixtures
-│   ├── fixtures/
-│   │   ├── rss/            # Flux RSS de test
-│   │   └── html/           # Pages HTML de test
-│   └── *_tests.rs          # Tests par module
 ├── Cargo.toml
 ├── docker-compose.yml
 ├── Dockerfile
@@ -96,567 +85,276 @@ ingest-pipeline/
 
 ## Démarrage rapide
 
-### Prérequis
-
-- Rust 1.88+ (pour compiler)
-- PostgreSQL 16+ (ou Docker)
-- Docker & Docker Compose (optionnel, recommandé)
-
-### Avec Docker Compose (recommandé)
+### Avec Docker Compose
 
 ```bash
-# 1. Copier la config
 cp .env.example .env
-
-# 2. Lancer le stack complet
 docker compose up -d
-
-# 3. Vérifier le health check
-curl http://localhost:3000/health
-# → {"status":"ok"}
-
-# 4. Voir les logs
-docker compose logs -f backend
-
-# 5. Arrêter
-docker compose down -v
+curl http://localhost:3000/health   # → {"status":"ok"}
 ```
 
-### Sans Docker (dev local)
+### Sans Docker
 
 ```bash
-# 1. Créer la base de données PostgreSQL
 createdb mypod_pipeline
-
-# 2. Configurer les variables d'environnement
 export DATABASE_URL="postgres://user:password@localhost:5432/mypod_pipeline"
-export PORT=3000
-export LOG_LEVEL=info
-
-# 3. Lancer les migrations
 cargo sqlx migrate run
-
-# 4. Lancer le pipeline complet
 cargo run -- all
 ```
 
-### Lancer les tests
+### Tests et quality gates
 
 ```bash
-# Tests rapides (sans DB)
-cargo test --lib
-
-# Tous les tests (nécessite une DB PostgreSQL)
-export DATABASE_URL="postgres://..."
-cargo test --all-targets --all-features
-
-# Tests d'intégration avec vrais flux RSS (nécessite internet + DB)
-cargo test -- --ignored
-
-# Benchmarks de performance (voir section "Performance")
-cargo bench --bench bench_insert  # Batch vs individual
-cargo bench --bench bench_dedup   # Déduplication
+cargo test --lib                  # Tests unitaires (sans DB)
+cargo test --all-targets          # Tous les tests (avec DB)
+cargo test -- --ignored           # Tests E2E (vrais flux RSS)
 
 # Quality gates (à passer avant chaque commit)
-cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets
 ```
 
-## Composants clés
+## Variables d'environnement
 
-### 1. Job Queue (`src/queue/`)
+Toutes dans `.env` (`.gitignore`). Jamais de clés en dur dans le code.
 
-**Table `jobs`** :
-- `id`, `job_type`, `payload` (JSONB), `status` (pending|running|completed|failed|dead)
-- `priority`, `attempts`, `max_attempts`, `run_at`, `locked_at`, `locked_by`
+| Variable | Obligatoire | Défaut | Description |
+|---|---|---|---|
+| `DATABASE_URL` | Oui | — | URL PostgreSQL (port 5432) |
+| `PORT` | Non | 3000 | Port API HTTP |
+| `LOG_LEVEL` | Non | info | Niveau de log (trace/debug/info/warn/error) |
+| `HETZNER_EXTRACT_URL` | Non | — | URL du service d'extraction Scrapling Hetzner |
+| `HETZNER_EXTRACT_SECRET` | Non | — | Clé API Scrapling |
+| `PIPELINE_API_SECRET` | Non | — | Secret pour l'API interne |
+| `BFF_CRON_SECRET` | Non | — | Secret pour les endpoints cron |
+| `RUN_SCHEDULE` | Non | `0 2,6,14,20 * * *` | Expression cron du scheduler |
 
-**Mécanisme** :
-1. `create_job()` insère un job + envoie `NOTIFY jobs_channel`
-2. `pick_jobs()` utilise `SELECT FOR UPDATE SKIP LOCKED` pour éviter les conflits entre workers
-3. `Worker::run()` écoute `LISTEN jobs_channel` (ou poll toutes les secondes en fallback)
-4. `fail_job()` applique un backoff exponentiel (`2^attempts * 1s`), marque `dead` après 3 échecs
+## Schéma base de données
 
-**⚠️ Point d'attention** : Les workers concurrents utilisent `SKIP LOCKED` pour ne jamais verrouiller la table entière. Ne jamais remplacer par un simple `UPDATE ... WHERE status='pending'`.
+### feed_sources
 
-### 2. RSS Parser (`src/utils/rss_parser.rs`)
+Sources RSS configurées. Champs : `id`, `feed_url`, `name`, `category`, `tier`, `fetch_status`, `last_ingested_pub_date`, `enabled`.
 
-**Sans dépendance externe** : parsing XML par string/regex.
+### raw_articles
 
-Supporte :
-- RSS 2.0 (`<item>`)
-- Atom (`<entry>`)
-- JSON Feed (`.items`)
+Table principale des articles ingérés. Champs clés :
 
-Fonctionnalités :
-- CDATA unwrap
-- HTML entities decode
-- URLs relatives normalisées avec `base_url`
-- Strip HTML des titles/descriptions
-- Extraction des images (media:content, enclosure, thumbnail, `<img>` dans description)
-- Parsing des dates (RFC 822, ISO 8601)
+| Colonne | Type | Description |
+|---|---|---|
+| `id` | UUID | Identifiant unique |
+| `source_id` | TEXT → feed_sources | Source RSS d'origine |
+| `title` / `title_clean` | TEXT | Titre brut et nettoyé |
+| `url` / `canonical_url` | TEXT | URL article et URL canonique |
+| `content` | TEXT | Texte extrait (clean) |
+| `content_legacy` | TEXT | Ancienne extraction regex (référence, à nettoyer après validation) |
+| `content_length` | INTEGER | Longueur du texte extrait |
+| `processing_status` | TEXT | ingested → extracted → pending_qualification → qualified / rejected |
+| `quality_status` | TEXT | pending / qualified / rejected |
+| `duplicate_status` | TEXT | pending / distinct / duplicate / near_duplicate |
+| `duplicate_of` | UUID | Référence vers l'article original si doublon |
+| `extraction_attempts` | INTEGER | Nombre de tentatives d'extraction |
+| `preferred_extraction_method` | TEXT | `hetzner_fallback` si le site nécessite JavaScript |
 
-**⚠️ Point d'attention** : Le parser est volontairement léger (pas de crate `rss` ou `xml-rs`). Si tu ajoutes un format complexe, vérifie que les fixtures de test couvrent les edge cases (CDATA, namespaces, encodage).
+### jobs
 
-### 3. Extraction HTML (`src/utils/text_extract.rs`)
+Job queue PostgreSQL : `id`, `job_type`, `payload` (JSONB), `status`, `priority`, `attempts`, `max_attempts`, `run_at`, `locked_at`, `locked_by`.
 
-**Sans DOM** : extraction par regex.
+Mécanisme : `SELECT FOR UPDATE SKIP LOCKED` pour éviter les conflits entre workers, `NOTIFY jobs_channel` pour réveiller les workers immédiatement. Backoff exponentiel (`2^attempts * 1s`), max 3 tentatives avant `dead`.
 
-Algorithme :
-1. Extrait metadata (`canonical_url`, `title` via og:title ou `<title>`)
-2. Extrait contenu principal : `<article>` → `<main>` → `<body>`
-3. Supprime 24+ éléments non-content (script, nav, footer, pub, etc.)
-4. Remplace les block tags par `\n`, les inline tags par espace
-5. Collapse whitespace
-6. Nettoie le titre (split sur `" - "`, `" | "`, `" — "`, etc.)
+### rejected_articles
 
-**⚠️ Point d'attention** : Cet extracteur est optimisé pour les articles de presse. Si tu changes la liste des tags supprimés, teste avec les fixtures `article_noisy.html` et `article_clean.html`.
+Articles rejetés avec raison : `article_id`, `source_id`, `title`, `url`, `reason`, `details`.
 
-### 4. Déduplication (`src/utils/dedup.rs`)
+## Extraction de contenu
 
-**Deux niveaux** :
-1. **URL exacte** : normalise l'URL (protocol+host+path, lowercase, sans query/fragment) et compare
-2. **Jaccard titre** : si pas de match URL, compare les titres (stop words FR/EN filtrés, threshold 80%)
+### Approche duale : rs-trafilatura + regex fallback
 
-**⚠️ Point d'attention** :
-- Le pré-dédup (ingest step) ne compare que les URLs (pas encore de `title_clean`)
-- Le dédup final (content step) utilise `title_clean` après extraction HTML
-- Ne jamais comparer les titres bruts sans normaliser (stop words + ponctuation)
+Le pipeline utilise **rs-trafilatura** (crate Rust, F1=0.859 au benchmark WCXB sur 2 008 pages) en première intention, avec le regex comme filet de sécurité. Le flux est :
 
-### 5. URL Resolver (`src/utils/url_resolver.rs`)
+```
+Fetch HTML → rs-trafilatura → si échec ou extraction_quality < 0.3 → regex (fallback)
+```
 
-Résout les URLs raccourcies (t.co, bit.ly, news.google.com, etc.) vers l'URL source finale.
+rs-trafilatura **nettoie le HTML, ne le télécharge pas**. Le fetch HTML (5 stratégies HTTP + fallback Hetzner) reste en amont.
 
-Stratégies (dans l'ordre) :
-1. HEAD request (follow redirects, timeout 5s)
-2. GET request (follow redirects, timeout 5s) + parse HTML si pas de redirect
-3. Meta refresh (`<meta http-equiv="refresh" content="0; url=...">`)
-4. Link canonical (`<link rel="canonical" href="...">`)
+### Problématique résolue
 
-**⚠️ Point d'attention** : Le resolver ne fait de requête QUE pour les domains raccourcisseurs (liste codée en dur). Pour les URLs normales, il retourne `None` immédiatement.
+Les extractions regex seules incluaient du bruit qui polluait les embeddings en aval :
 
-### 6. Ingest Step (`src/pipeline/ingest_step.rs`)
+- Commentaires HTML (`<!-- Header + Social -->`) non filtrés
+- Breadcrumbs de navigation ("News", "Gaming", "Big Tech")
+- Catégories en bloc, sidebars, articles connexes
+- Métadonnées résiduelles ("By Steve Dent", "May 7, 2026")
+- Sur MarkTechPost : regex extrait **2.4× trop de contenu** (17 658 mots vs 1 657 attendus), causant 92% de singletons dans Vox\_rag
 
-Algorithme :
-1. Récupère le feed source
-2. Fetch le flux RSS (timeout 15s, user-agent custom)
-3. Parse les items
-4. Trie par date décroissante, garde les 30 plus récents
-5. Pour chaque item : résout l'URL, vérifie doublon par URL, vérifie cutoff date, insère
+### Options rs-trafilatura pour VoxPod
 
-**⚠️ Point d'attention critique** : Le curseur `last_ingested_pub_date` N'EST PAS avancé dans le step. C'est le **Ingest Worker** qui l'avance UNIQUEMENT après avoir créé tous les jobs `process_article` avec succès. Cela garantit l'idempotence.
+| Option | Valeur | Raison |
+|---|---|---|
+| `favor_precision` | `true` | Seuils plus stricts, moins de bruit dans les embeddings |
+| `deduplicate` | `true` | Supprime les paragraphes répétés (articles connexes, sidebars) |
+| `max_link_density` | `0.5` | Plus agressif contre les sections de navigation (défaut = 0.8) |
+| `url` | passé | Meilleure extraction metadata (hostname, canonical URL) |
+| `include_tables` | `true` | Conserve les tableaux de données |
+| `include_comments` | `false` | Pas de commentaires HTML |
+| `include_images` | `false` | Pas d'images |
+| `include_links` | `false` | Pas de liens |
+| `include_formatting` | `false` | Texte brut uniquement |
+| `use_fallback_extraction` | `true` | JSON-LD + structural fallback si extraction principale insuffisante |
 
-### 7. Content Step (`src/pipeline/content_step.rs`)
+La metadata (titre, canonical URL) est extraite en priorité par rs-trafilatura (JSON-LD, OG tags, Dublin Core). Si rs-trafilatura échoue, le regex prend le relais.
 
-Algorithme :
-1. Guard : vérifie que l'article est en statut `ingested` ou `extracted`
-2. Pré-dédup par URL avec les 500 derniers articles comparables
-3. Extraction texte : essaie 5 stratégies HTTP + fallback Hetzner
-4. Validation : min 300 caractères, min 350 mots
-5. Dédup finale par titre (Jaccard)
-6. Met à jour l'article : `quality_status='qualified'`, `processing_status='pending_qualification'`
+### Résultats de la comparaison (v1.1)
 
-**Stratégies HTTP** (dans l'ordre) :
+| Source | Résultat |
+|---|---|
+| **Engadget** (20 articles) | Les deux méthodes marchent. Regex inclut les breadcrumbs ("News", "Gaming"). Trafilatura commence directement par le contenu. |
+| **MarkTechPost** (10 articles) | Différence massive. Regex capture sidebars, articles connexes, blocs de code (jusqu'à 17 000 mots). Trafilatura extrait uniquement l'article (~1 500 mots). |
+| **TestingCatalog** (17 articles) | Les deux sont proches (HTML propre). Trafilatura inclut les tweets embeds — bruit négligeable. |
+| **The Decoder** (10 articles) | Regex laisse passer les commentaires HTML. Trafilatura produit un texte propre avec "Key Points" en début. |
+
+### Points d'attention
+
+1. **Ne jamais supprimer le fallback regex** — rs-trafilatura peut échouer sur certains sites. Le regex garantit qu'on ne perd jamais de données.
+2. **`extraction_quality < 0.3` = fallback** — Le score de confiance ML détecte les extractions douteuses. Ne pas monter ce seuil trop haut.
+3. **Ne pas modifier `favor_precision` sans re-tester** — Ce réglage est critique pour les embeddings. `favor_recall = true` remettrait du bruit.
+4. **`max_link_density: 0.5`** — Ne pas remonter à 0.8 (défaut). La valeur 0.5 est plus agressive contre les sections de navigation.
+5. **Les tweets embeds passent à travers** — rs-trafilatura conserve les tweets incorporés. Bruit mineur, à surveiller.
+6. **rs-trafilatura ne remplace pas le fetch HTML** — Le fetch (stratégies HTTP + Hetzner) reste en amont.
+7. **La colonne `content_legacy`** existe dans `raw_articles`. Ne pas la supprimer, elle sert de référence pour comparer. Peut être nettoyée après validation définitive.
+
+### Stratégies de fetch HTTP
+
+5 stratégies essayées dans l'ordre (timeout 15s) :
+
 1. User-Agent Googlebot
 2. Referer Google
 3. Referer Twitter (t.co)
 4. Version AMP (`?amp=1`)
 5. Referer Facebook
 
-**⚠️ Point d'attention** : Si l'article a `preferred_extraction_method='hetzner_fallback'`, Hetzner est essayé en PREMIER (avant les 5 stratégies).
+Si toutes échouent → fallback **Scrapling Hetzner** (extraction JavaScript-rendered pour les sites comme Euronews, RFI).
 
-### 8. Scheduler (`src/workers/scheduler.rs`)
+### Seuils de validation
 
-Cron : `0 2,6,14,20 * * *` (tous les jours à 2h, 6h, 14h, 20h)
+- Contenu ≥ 300 caractères
+- Nombre de mots ≥ 350
+- En dessous → article rejeté (`content_too_short`)
 
-Override via `RUN_SCHEDULE` (ex: `*/1 * * * *` pour tester)
+## Bugs connus
 
-Algorithme `handle_scheduled_run` :
-1. Marque les runs zombies (> 2h) comme failed
-2. Nettoie les articles orphelins
-3. Guard : skip si un run est déjà en cours
-4. Crée un `pipeline_run`
-5. Récupère les feeds actifs (tier1_keep en priorité)
-6. Crée un `pipeline_step_run` pour 'ingest'
-7. Crée des jobs `fetch_feed` (un par feed)
-8. Nettoie les doublons anciens (> 7 jours)
+### BUG-001 : Migration 0005 `IF NOT EXISTS` invalide — **FIXÉ**
 
-**⚠️ Point d'attention** : Le guard empêche les runs en double. Si le scheduler crash et redémarre, il ne créera pas de run concurrent grâce à la vérification `SELECT COUNT(*) FROM pipeline_runs WHERE status='running'`.
+- **Cause** : `ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS` n'existe pas en PostgreSQL
+- **Fix** : Remplacement par un bloc `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN null; END $$;`
+- **Statut** : Corrigé dans `migrations/0005_unique_url_source.sql`
 
-## Types DB ↔ Rust
+### BUG-003 : `quality_status` jamais mis à `qualified` — **NON FIXÉ** (BLOQUANT)
 
-### Enums PostgreSQL
+- **Cause** : `content_step.rs` met `processing_status = 'PendingQualification'` mais ne définit pas `quality_status = 'qualified'`. L'étape de qualification est un placeholder commenté dans `content_worker.rs:46`.
+- **Impact** : Les articles extraits avec succès restent en `quality_status = 'pending'` et ne sont pas importables par Vox\_rag.
+- **Workaround** :
+  ```sql
+  UPDATE raw_articles SET quality_status = 'qualified'
+  WHERE processing_status IN ('pending_qualification')
+    AND content IS NOT NULL AND length(content) > 300;
+  ```
+- **Fix nécessaire** : Ajouter `quality_status = 'qualified'` dans `content_step.rs` après extraction réussie.
 
-| PostgreSQL | Rust | Valeurs |
-|-----------|------|---------|
-| `job_status` | `JobStatus` | pending, running, completed, failed, dead |
+## Intégration avec Vox\_rag
 
-### Enums TEXT (autres)
+L'`ingest-pipeline` est la **première moitié** du pipeline VoxPod. Il produit des articles qualifiés qui sont ensuite importés dans **Vox\_rag** pour la seconde moitié du traitement.
 
-Toutes les autres enums sont stockées en `TEXT` dans PostgreSQL et mappées via `impl_text_enum!` :
-
-| PostgreSQL | Rust | Valeurs |
-|-----------|------|---------|
-| `feed_fetch_status` | `FeedFetchStatus` | Pending, Fetching, Success, Failed, Disabled |
-| `quality_status` | `QualityStatus` | Pending, Qualified, Rejected, PendingQualification |
-| `duplicate_status` | `DuplicateStatus` | Pending, Distinct, Duplicate, NearDuplicate |
-| `processing_status` | `ProcessingStatus` | Ingested, Extracted, ExtractionFailed, PendingQualification, Qualified, Rejected |
-| `run_status` | `RunStatus` | Running, Completed, Failed |
-| `run_trigger_type` | `RunTriggerType` | Scheduled, Manual, Test |
-| `step_name` | `StepName` | Ingest, Content, Qualification, Audio |
-| `step_status` | `StepStatus` | Running, Completed, Failed |
-
-**⚠️ Point d'attention** : `JobStatus` utilise `#[derive(sqlx::Type)]` (vrai ENUM PostgreSQL). Les autres utilisent `impl_text_enum!` qui fait le mapping TEXT ↔ Rust via serde. **Ne mélange jamais les deux approches pour le même enum.**
-
-## Performance et Benchmarks
-
-### Résultats mesurés (v1.1)
-
-Les benchmarks ont été exécutés avec Criterion sur un environnement local (MacBook Pro, PostgreSQL via Docker). Ce ne sont **pas** des estimations théoriques mais des mesures réelles sur le code.
-
-#### Insertion d'articles : Batch vs Individuel
-
-| Méthode | Temps (30 articles) | Gain |
-|---------|-------------------|------|
-| Insert individuel (1 par 1) | **3.84 ms** | baseline |
-| **Batch insert (UNNEST)** | **587 µs** | **6.5x plus rapide** |
-
-**Explication** : Avant, chaque article déclenchait un `INSERT` SQL séparé (30 requêtes). Maintenant, tous les articles sont insérés en **une seule requête** via `UNNEST`. Le gain est constant quelle que soit la taille du batch.
-
-#### Déduplication (Jaccard)
-
-| Corpus | Temps de recherche | Scaling |
-|--------|-------------------|---------|
-| 10 articles | 29 µs | — |
-| 100 articles | 290 µs | **linéaire** |
-| 1 000 articles | 2.9 ms | **linéaire** |
-
-**Explication** : L'algorithme Jaccard scanne la liste des articles existants. Le temps est proportionnel au nombre d'articles comparés. Avec l'index `pg_trgm` (v1.1), PostgreSQL filtre les candidats en <10ms même à 1M d'articles.
-
-#### Extraction HTML
-
-| Opération | Temps moyen |
-|-----------|-------------|
-| Extraction texte (fixture article_clean.html) | **~4.5 ms** |
-
-**Explication** : L'extraction par regex est rapide et constante car elle ne charge pas de DOM complet en mémoire.
-
-#### Ingestion complète (flux RSS simulé)
-
-| Étape | Temps moyen |
-|-------|-------------|
-| Ingestion 3 articles (RSS + DB) | **~22 ms** |
-
-**Explication** : Temps total du `process_ingest_step` avec un mock RSS (pas de latence réseau). En production, le réseau représente 80-90% du temps total.
-
-### Lancer les benchmarks
-
-```bash
-# Benchmarks CPU uniquement (pas de DB nécessaire)
-cargo bench --bench bench_dedup
-cargo bench --bench bench_extract
-
-# Benchmarks avec DB (nécessite PostgreSQL)
-docker compose up -d postgres
-cargo bench --bench bench_insert    # Le plus important : batch vs individual
-cargo bench --bench bench_ingest    # Pipeline complet
-
-# Lancer tous les benchmarks + générer rapport
-./run_benchmarks.sh
-
-# Rapports visuels HTML
-target/criterion/bench_insert/report/index.html
-```
-
-**Méthodologie** : Les benchmarks utilisent Criterion (minimum 30 runs, suppression des outliers au-delà de 2σ, rapport p-value). Voir `BENCHMARK_METHODOLOGY.md` pour le protocole complet.
-
-## Optimisations v1.1
-
-Quatre optimisations ont été implémentées pour améliorer les performances sans changer la logique métier :
-
-### 1. mimalloc — Allocator mémoire (Linux uniquement)
-
-**Problème** : L'allocateur système par défaut n'est pas optimisé pour les workloads intensifs en allocations (parsing XML, strings).
-
-**Solution** : Remplacement par `mimalloc` (Microsoft) en une ligne.
-
-**Fichiers** : `Cargo.toml`, `src/main.rs`
-
-**Impact** : +5-15% de throughput mesuré sur les opérations mémoire intensives.
-
-### 2. HTTP/2 + Connection Pooling (reqwest)
-
-**Problème** : Chaque requête HTTP créait un nouveau `reqwest::Client` → nouveau handshake TLS + connexion TCP à chaque fois.
-
-**Solution** : Création d'un `Client` global réutilisé avec HTTP/2, keepalive, et compression gzip/brotli.
-
-**Fichiers** : `src/config.rs`, `src/pipeline/content_step.rs`, `src/pipeline/ingest_step.rs`, `src/utils/url_resolver.rs`
-
-**Impact** : Réduction des handshakes TLS. Sur 5 stratégies HTTP, on réutilise la même connexion au lieu d'en ouvrir 5.
-
-### 3. Index pg_trgm (déduplication)
-
-**Problème** : La dédup finale chargeait 500 articles en mémoire et les comparait un par un avec Jaccard.
-
-**Solution** : Index GIN trigram sur `raw_articles.title_clean` qui permet à PostgreSQL de trouver les titres similaires en <10ms.
-
-**Fichiers** : `migrations/0004_pg_trgm_index.sql`, `src/db/article_queries.rs`, `src/pipeline/content_step.rs`
-
-**Impact** : Recherche de similarité en temps constant quelle que soit la taille du corpus (vs O(n) avant).
-
-**⚠️ Point d'attention** : L'opérateur `%` de pg_trgm retourne les articles avec similarity > 0.3 par défaut. Le Jaccard en Rust fait le tri final (threshold 0.8).
-
-### 4. Batch inserts (UNNEST)
-
-**Problème** : L'ingest step insérait les articles un par un dans une boucle (30 requêtes SQL pour 30 articles).
-
-**Solution** : Insertion en batch via `UNNEST` en une seule requête SQL avec `ON CONFLICT (url, source_id) DO NOTHING`.
-
-**Fichiers** : `migrations/0005_unique_url_source.sql`, `src/db/article_queries.rs`, `src/pipeline/ingest_step.rs`
-
-**Impact mesuré** : **6.5x plus rapide** (587 µs vs 3.84 ms pour 30 articles).
-
-**⚠️ Point d'attention** : La contrainte `UNIQUE (url, source_id)` est nécessaire pour que `ON CONFLICT` fonctionne. Cette contrainte existait déjà implicitement via la logique de doublon, mais n'était pas formalisée en base.
-
-## Points d'attention pour les développeurs
-
-### Idempotence
-
-Le pipeline est conçu pour être idempotent :
-- Ré-exécuter un `fetch_feed` ne crée pas de doublons (vérifie `get_by_url` avant insert)
-- Ré-exécuter un `process_article` sur un article déjà qualifié est un no-op (guard dans content_step)
-- Le scheduler a un guard contre les runs en double
-
-**Régression à éviter** : Ne jamais supprimer le check `get_by_url()` avant l'insertion dans l'ingest step.
-
-### Gestion des erreurs
-
-- `anyhow::Result` pour le code applicatif (erreurs non structurées)
-- `thiserror` pour les erreurs métier (si besoin dans le futur)
-- `anyhow::Context` sur chaque requête SQL pour des messages explicites
-
-**Régression à éviter** : Ne pas utiliser `.unwrap()` ou `.expect()` dans le code de production (hors `main.rs`). Toujours propager les erreurs avec `?`.
-
-### Transactions
-
-Pour l'instant, chaque opération est autonome (pas de transactions explicites multi-requêtes). Si tu ajoutes une logique transactionnelle complexe :
-
-1. Utilise `sqlx::Transaction` ou `pool.begin()`
-2. Gère le rollback en cas d'erreur
-3. Attention aux locks `FOR UPDATE` qui bloquent les autres workers
-
-### Performance
-
-- Le worker poll toutes les secondes (configurable via `with_poll_interval`)
-- `LISTEN/NOTIFY` réveille le worker immédiatement quand un job est créé
-- Le batch size par défaut est 10 jobs
-- L'extraction HTML utilise des regex compilées une seule fois via `LazyLock`
-
-**Régression à éviter** : Ne pas diminuer le poll interval en dessous de 500ms (charge inutile sur PostgreSQL).
-
-### Tests
-
-- **Tests unitaires** : dans `src/xxx.rs` sous `#[cfg(test)]`, utilisent des mocks et des fixtures
-- **Tests d'intégration** : dans `tests/xxx_tests.rs`, utilisent `#[sqlx::test]` avec une DB PostgreSQL
-- **Tests E2E** : dans `tests/integration_tests.rs`, marqués `#[ignore]`, utilisent de vrais flux RSS
-
-**Régression à éviter** : Ne jamais faire de requêtes HTTP réelles dans les tests non-ignorés. Utiliser `httpmock` ou des fixtures locales.
-
-## Guide de contribution (pour les agents)
-
-### Avant de commencer
-
-1. Lire le PRD : `Documentation/INGEST_PIPELINE_PRD.md`
-2. Lancer les quality gates :
-   ```bash
-   cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-targets --all-features
-   ```
-3. Vérifier que `cargo sqlx prepare --check` passe (si sqlx offline mode activé)
-
-### Ajouter une user story
-
-1. Créer une branche : `git checkout -b feature/US-XXX`
-2. Implémenter les changements
-3. Ajouter des tests (coverage > 80% sur les utilitaires)
-4. Vérifier les quality gates
-5. Commiter avec message conventionnel :
-   ```
-   feat: US-XXX description
-   
-   - Changement 1
-   - Changement 2
-   ```
-
-### Modifier un utilitaire
-
-Les utilitaires dans `src/utils/` sont **purs** (pas de DB, pas d'IO). Si tu modifies :
-- `rss_parser.rs` → ajoute des fixtures dans `tests/fixtures/rss/`
-- `text_extract.rs` → ajoute des fixtures dans `tests/fixtures/html/`
-- `dedup.rs` → ajoute des cas de test dans `tests/dedup_tests.rs`
-
-### Modifier une query DB
-
-1. Vérifier que la struct dans `schema.rs` correspond à la requête
-2. Utiliser `sqlx::query_as!` ou `sqlx::query!` (pas de `query` non typé)
-3. Ajouter un test avec `#[sqlx::test]`
-4. Si tu changes le schéma SQL, créer une nouvelle migration dans `migrations/`
-
-### Ajouter un mode de lancement
-
-1. Ajouter la variante dans `Mode` (src/main.rs)
-2. Implémenter la logique dans `match cli.mode`
-3. Mettre à jour ce README
-4. Vérifier que `cargo run -- <mode>` compile
-
-## Variables d'environnement
-
-| Variable | Obligatoire | Défaut | Description |
-|----------|-------------|--------|-------------|
-| `DATABASE_URL` | Oui | — | URL PostgreSQL |
-| `PORT` | Non | 3000 | Port API HTTP |
-| `LOG_LEVEL` | Non | info | Niveau de log (trace/debug/info/warn/error) |
-| `HETZNER_EXTRACT_URL` | Non | — | URL du service d'extraction Hetzner |
-| `HETZNER_EXTRACT_SECRET` | Non | — | Clé API Hetzner |
-| `PIPELINE_API_SECRET` | Non | — | Secret pour l'API interne |
-| `BFF_CRON_SECRET` | Non | — | Secret pour les endpoints cron |
-| `RUN_SCHEDULE` | Non | `0 2,6,14,20 * * *` | Expression cron du scheduler |
-
-## Déploiement
-
-### Local (Docker Compose)
-
-```bash
-docker compose up -d
-```
-
-### Production (ex: Railway, Fly.io, VPS)
-
-1. Builder l'image Docker :
-   ```bash
-   docker build -t ingest-pipeline .
-   ```
-
-2. Pousser sur le registry du provider
-
-3. Configurer les variables d'environnement (voir ci-dessus)
-
-4. Lancer avec `cargo run -- all` (ou séparer les services)
-
-**⚠️ Point d'attention production** :
-- Toujours utiliser PostgreSQL en production (pas de SQLite)
-- Configurer des health checks (endpoint `/health`)
-- Surveiller les jobs `dead` (indiquent des échecs répétés)
-- Le scheduler doit tourner sur une seule instance (pas de multi-instance sans coordination)
-
-## Dépannage
-
-### `cargo check` échoue avec des erreurs sqlx
-
-```bash
-# Si la DB n'est pas accessible, générer le cache offline
-cargo sqlx prepare
-
-# Ou vérifier que DATABASE_URL est correct
-export DATABASE_URL="postgres://user:password@host:5432/db"
-```
-
-### Les tests sqlx échouent
-
-```bash
-# Vérifier que PostgreSQL est accessible
-psql $DATABASE_URL -c "SELECT 1"
-
-# Vérifier que les migrations sont appliquées
-cargo sqlx migrate run
-```
-
-### Le worker ne traite pas les jobs
-
-1. Vérifier que le worker est lancé : `cargo run -- worker`
-2. Vérifier les logs : les jobs sont-ils en statut `pending` ?
-3. Vérifier la connexion PostgreSQL : `LISTEN/NOTIFY` fonctionne-t-il ?
-4. Vérifier qu'il n'y a pas de deadlock : `SELECT * FROM pg_locks WHERE NOT granted;`
-
-### Docker Compose ne démarre pas
-
-1. Vérifier que le port 5432 n'est pas déjà utilisé
-2. Vérifier les logs PostgreSQL : `docker compose logs postgres`
-3. Vérifier que le backend attend bien PostgreSQL : `depends_on` + `condition: service_healthy`
-
-## Ressources
-
-- **PRD** : `Documentation/INGEST_PIPELINE_PRD.md` (spécifications complètes)
-- **Spec originale** : `Documentation/INGEST_PIPELINE_SPEC.md` (logique TypeScript originale)
-- **Repository** : https://github.com/Nic0lasgon/ingest-pipeline
-- **Vox_rag** (module aval) : `../Vox_rag/`
-
-## Intégration avec Vox_rag
-
-L'`ingest-pipeline` produit des articles qualifiés (`quality_status='qualified'`) qui sont ensuite importés dans `Vox_rag` pour l'embedding et le topic tracking.
-
-### Flux complet
+### Flux complet VoxPod
 
 ```
 RSS/Atom/JSON Feed
   ↓
-ingest-pipeline: fetch → parse → extract → dedup → qualify
+ingest-pipeline : fetch → parse → extract (rs-trafilatura) → dedup → qualify
   ↓
-raw_articles (quality_status='qualified')
+raw_articles (quality_status = 'qualified')
   ↓
 import vers Vox_rag (scripts/import_from_ingest.sh)
   ↓
-Vox_rag: embedding Octen → similarité → topics → LLM
+Vox_rag : embedding Octen → similarité pgvector → topic clustering → LLM (DeepSeek)
 ```
+
+### Ce que Vox\_rag fait avec les articles
+
+Vox\_rag prend les articles qualifiés et :
+
+1. Génère des **embeddings vectoriels** (modèle `octen-embedding-8b`, 4096 dimensions) via l'API Octen
+2. Calcule la **similarité cosinus** entre articles via pgvector
+3. Regroupe les articles en **topics** selon des seuils de similarité :
+   - `topic_strong ≥ 0.84` : même topic, fusion automatique
+   - `topic_ambiguous 0.76-0.84` : zone grise → LLM DeepSeek pour arbitrage
+   - `topic_weak 0.70` : sujet potentiellement lié
+4. Maintient une **timeline** par topic et génère des résumés multi-sources
+
+### Comment les articles sont importés
+
+Le script `Vox_rag/scripts/import_from_ingest.sh` copie les articles depuis la base `ingest-pipeline` (port 5432) vers la base `Vox_rag` (port 5433), en filtrant sur `quality_status = 'qualified'`.
+
+### Séparation des bases
+
+| Base | Port | Contenu |
+|---|---|---|
+| ingest-pipeline | 5432 | Sources RSS, articles bruts, jobs, logs de pipeline |
+| Vox\_rag | 5433 | Articles qualifiés, embeddings, topics, timelines |
 
 ### Variables d'environnement partagées
 
-| Variable | ingest-pipeline | Vox_rag | Description |
-|---|---|---|---|
-| `DATABASE_URL` | Port 5432 | Port 5433 | Bases séparées |
-| `HETZNER_EXTRACT_URL` | Oui | Non | Extraction contenu |
-| `HETZNER_EXTRACT_SECRET` | Oui | Non | Clé API Scrapling |
-| `OCTEN_API_KEY` | Non | Oui | Clé API embedding |
-| `LLM_API_KEY` | Non | Oui | Clé API DeepSeek |
+| Variable | ingest-pipeline | Vox\_rag |
+|---|---|---|
+| `DATABASE_URL` | Port 5432 | Port 5433 |
+| `HETZNER_EXTRACT_URL` / `HETZNER_EXTRACT_SECRET` | Oui | Non |
+| `OCTEN_API_KEY` | Non | Oui |
+| `LLM_API_KEY` / `LLM_MODEL` | Non | Oui |
 
-### Scrapling (extraction contenu)
+### Impact de la qualité d'extraction sur Vox\_rag
 
-Le serveur Scrapling Hetzner est utilisé comme fallback d'extraction quand les 5 stratégies HTTP échouent (sites JavaScript-rendered).
+Un texte bruité (regex seul) dilue les embeddings et empêche le topic clustering : **92% de singletons** constatés lors de la validation du 2026-05-29. L'intégration rs-trafilatura est la correction principale pour réduire ce taux et permettre à Vox\_rag de grouper correctement les articles.
 
-**API** :
+## Conventions de code
+
+- Rust edition 2021, `anyhow::Result`, `tracing` pour les logs
+- Pas de `.unwrap()` ou `.expect()` dans le code de production (autorisé dans les tests uniquement)
+- `sqlx::query_as::<_, T>()` avec `.bind()` — pas de macros compile-time
+- `SKIP LOCKED` pour la job queue — jamais de simple `UPDATE ... WHERE status='pending'`
+- `LazyLock` pour les regex compilées une seule fois
+- Quality gates avant chaque commit :
+  ```bash
+  cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets
+  ```
+- Tests : 196 tests (unitaires + intégration). `httpmock` pour les requêtes HTTP, fixtures locales pour le HTML/RSS.
+
+## Performances
+
+### Benchmarks mesurés (Criterion, MacBook Pro, PostgreSQL Docker)
+
+| Opération | Temps | Notes |
+|---|---|---|
+| Batch insert 30 articles (UNNEST) | 587 µs | 6.5× plus rapide que l'insert individuel |
+| Dédup Jaccard (100 articles) | 290 µs | Scaling linéaire, index pg\_trgm en base |
+| Extraction texte (regex) | ~4.5 ms | Regex compilées via LazyLock |
+| rs-trafilatura | ~44 ms/page | Moyenne constatée |
+| Ingestion 3 articles (mock RSS) | ~22 ms | Sans latence réseau |
+
+### Optimisations v1.1
+
+- **mimalloc** (Linux) : allocateur mémoire optimisé, +5-15% throughput
+- **HTTP/2 + connection pooling** : réutilisation des connexions reqwest
+- **Index pg\_trgm** GIN sur `title_clean` : dédup <10ms à 1M+ lignes
+- **Batch inserts UNNEST** : 6.5× plus rapide
+
+## Déploiement
+
 ```bash
-curl -X POST "https://search.myswearpod.de/extract" \
-  -H "Authorization: Bearer <HETZNER_EXTRACT_SECRET>" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "...", "stealth": true, "format": "txt"}'
+docker compose up -d          # Local
+docker build -t ingest-pipeline .  # Build image
 ```
 
-**Cas d'usage** : Euronews, RFI et autres sites qui rendent le contenu en JavaScript. Les descriptions RSS font 30-60 mots (en dessous du seuil de 80 mots pour l'embedding), donc l'extraction du contenu complet est nécessaire.
-
-## Changelog
-
-### v1.1.0 (optimisations performance)
-
-**Optimisations** :
-- **mimalloc** allocator global (Linux) → +5-15% throughput
-- **HTTP/2 + connection pooling** reqwest → réduction handshakes TLS
-- **Index pg_trgm** GIN sur `title_clean` → dédup <10ms à 1M+ rows
-- **Batch inserts** via UNNEST → **6.5x plus rapide** (587µs vs 3.84ms)
-
-**Nouveautés** :
-- Suite de benchmarks Criterion (`benches/`)
-- Méthodologie scientifique (`BENCHMARK_METHODOLOGY.md`)
-- Plan d'optimisation détaillé (`OPTIMIZATION_PLAN.md`)
-- Contrainte UNIQUE `(url, source_id)` pour l'idempotence
-
-**Tests** : 196 tests passent (zéro régression)
-
-### v1.0.0 (initial)
-- Pipeline complet RSS → qualification
-- Job queue PostgreSQL avec retries
-- 196 tests (95 unitaires + 101 intégration)
-- Docker Compose fonctionnel
-- Testé avec Le Monde RSS en local
+En production : une seule instance du scheduler (pas de multi-instance sans coordination). Les workers peuvent être multipliés (SKIP LOCKED garantit l'absence de conflits).
 
 ---
 
-**Dernière mise à jour** : 2026-05-29
-**Version** : v1.1.0
-**Auteurs** : Équipe d'agents IA (deepseek-v4-pro, mimo-v25-pro, kimi-2.6, glm-5.1, mimo-v25, deepseek-v4-flash)
+**Version** : v1.1.0 | **Dernière mise à jour** : 2026-05-29 | **Tests** : 196
