@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>Le Monde - RSS</title>
+  <link>https://www.lemonde.fr</link>
+  <description>Le Monde - RSS</description>
+  <language>fr</language>
+  <atom:link href="https://www.lemonde.fr/rss/une.xml" rel="self" type="application/rss+xml"/>
+  <item>
+    <title><![CDATA[Les enjeux de la prochaine conférence climat]]></title>
+    <link>https://www.lemonde.fr/planete/article/2024/01/15/les-enjeux-de-la-prochaine-conference-climat_6109001_3244.html</link>
+    <description><![CDATA[La COP29 s'annonce comme un rendez-vous crucial pour les engagements climatiques des pays développés.]]></description>
+    <pubDate>Mon, 15 Jan 2024 08:30:00 +0000</pubDate>
+    <dc:creator>Marie Dupont</dc:creator>
+    <media:content url="https://img.lemde.fr/2024/01/15/climate.jpg" type="image/jpeg" medium="image"/>
+    <category>Planète</category>
+  </item>
+  <item>
+    <title><![CDATA[Tech : les géants américains face à de nouvelles régulations]]></title>
+    <link>https://www.lemonde.fr/technologies/article/2024/01/14/tech-les-geants-americains-face-a-de-nouvelles-regulations_6109002_6530.html</link>
+    <description><![CDATA[<p>Le Congrès américain examine plusieurs projets de loi visant à encadrer les pratiques des grandes entreprises technologiques.</p> <p>Les discussions portent notamment sur la protection des données personnelles.</p>]]></description>
+    <pubDate>Sun, 14 Jan 2024 14:00:00 +0000</pubDate>
+    <dc:creator>Paul Martin</dc:creator>
+    <media:thumbnail url="https://img.lemde.fr/2024/01/14/tech-thumb.jpg"/>
+    <category>Technologies</category>
+  </item>
+  <item>
+    <title>Économie : la BCE maintient ses taux directeurs</title>
+    <link>https://www.lemonde.fr/economie/article/2024/01/13/economie-la-bce-maintient-ses-taux-directeurs_6109003_3234.html</link>
+    <description>La Banque centrale européenne a décidé de maintenir ses taux directeurs inchangés lors de sa dernière réunion.</description>
+    <pubDate>Sat, 13 Jan 2024 10:00:00 +0000</pubDate>
+    <enclosure url="https://img.lemde.fr/2024/01/13/bce.jpg" length="54321" type="image/jpeg"/>
+    <category>Économie</category>
+  </item>
+</channel>
+</rss>

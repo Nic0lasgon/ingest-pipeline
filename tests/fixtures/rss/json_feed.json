@@ -1,0 +1,38 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "JSON Feed Example",
+  "home_page_url": "https://example.com",
+  "feed_url": "https://example.com/feed.json",
+  "description": "An example JSON Feed for testing.",
+  "items": [
+    {
+      "id": "json-1",
+      "title": "JSON Feed Item One",
+      "url": "https://example.com/json/item-1",
+      "content_text": "Plain text content of the first item.",
+      "date_published": "2024-01-18T10:00:00+01:00",
+      "author": {
+        "name": "Claire Moreau"
+      },
+      "image": "https://example.com/json-img-1.jpg"
+    },
+    {
+      "id": "json-2",
+      "title": "JSON Feed Item Two",
+      "url": "https://example.com/json/item-2",
+      "summary": "A short summary of the second item.",
+      "content_text": "Full text that should be ignored because summary takes precedence.",
+      "date_published": "2024-01-19T15:30:00Z",
+      "author": {
+        "name": "David Leroy"
+      },
+      "banner_image": "https://example.com/banner-2.jpg"
+    },
+    {
+      "id": "json-3",
+      "url": "https://example.com/json/item-3",
+      "content_text": "Item with no title but has a URL.",
+      "date_published": "2024-01-20T08:00:00Z"
+    }
+  ]
+}

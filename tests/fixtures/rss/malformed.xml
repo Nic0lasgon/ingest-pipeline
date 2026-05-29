@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"
+<channel>
+  <title>Malformed Feed</title>
+  <link>https://example.com</link>
+  <description>This feed has broken XML</description>
+  <item>
+    <title>Unclosed title
+    <link>https://example.com/broken</link>
+    <description>Missing closing tags
+  </item>
+  <item>
+    <title></title>
+    <link></link>
+    <description>Empty title and link - should be filtered</description>
+  </item>
+</channel>
+</rss>

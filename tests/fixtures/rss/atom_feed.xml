@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Feed</title>
+  <link href="https://example.com/atom" rel="alternate"/>
+  <link href="https://example.com/atom/feed" rel="self"/>
+  <id>urn:uuid:feed-1234</id>
+  <updated>2024-01-20T12:00:00Z</updated>
+  <subtitle>An example Atom feed for testing.</subtitle>
+
+  <entry>
+    <title>Atom Entry One</title>
+    <link href="https://example.com/atom/entry-1" rel="alternate"/>
+    <id>urn:uuid:entry-1</id>
+    <updated>2024-01-18T10:00:00Z</updated>
+    <published>2024-01-18T09:00:00Z</published>
+    <summary>Summary of the first Atom entry.</summary>
+    <author>
+      <name>Alice Martin</name>
+      <email>alice@example.com</email>
+    </author>
+  </entry>
+
+  <entry>
+    <title>Atom Entry Two</title>
+    <link href="https://example.com/atom/entry-2" rel="alternate"/>
+    <id>urn:uuid:entry-2</id>
+    <updated>2024-01-19T14:30:00Z</updated>
+    <published>2024-01-19T14:00:00Z</published>
+    <content type="html">&lt;p&gt;Full &lt;b&gt;HTML&lt;/b&gt; content of entry two.&lt;/p&gt;</content>
+    <author>
+      <name>Bob Dupont</name>
+    </author>
+  </entry>
+
+  <entry>
+    <title>Atom Entry Three</title>
+    <link href="https://example.com/atom/entry-3" rel="alternate"/>
+    <id>urn:uuid:entry-3</id>
+    <updated>2024-01-20T11:00:00Z</updated>
+    <published>2024-01-20T10:00:00Z</published>
+    <summary>Third entry with &lt;img src="https://example.com/atom-img.jpg"/&gt; embedded image.</summary>
+  </entry>
+</feed>

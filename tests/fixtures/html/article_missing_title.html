@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/">Home</a>
+        </nav>
+    </header>
+
+    <article>
+        <h1>An Article Without a Title Tag</h1>
+        <p>This article has no title element and no og:title meta tag. The extractor should handle this gracefully by returning None for the title.</p>
+        <p>The content should still be extracted properly from the article tag.</p>
+    </article>
+
+    <footer>
+        <p>&copy; 2025</p>
+    </footer>
+</body>
+</html>

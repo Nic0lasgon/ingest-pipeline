@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>Simple RSS Feed</title>
+  <link>https://example.com</link>
+  <description>A simple test feed</description>
+  <item>
+    <title>First Article</title>
+    <link>https://example.com/article-1</link>
+    <description>This is the first article description.</description>
+    <pubDate>Mon, 15 Jan 2024 10:30:00 GMT</pubDate>
+    <author>john@example.com (John Doe)</author>
+  </item>
+  <item>
+    <title>Second Article</title>
+    <link>https://example.com/article-2</link>
+    <description>Another article with <b>bold</b> text.</description>
+    <pubDate>Tue, 16 Jan 2024 14:00:00 +0000</pubDate>
+  </item>
+  <item>
+    <title>Third Article</title>
+    <link>https://example.com/article-3</link>
+    <description>Third one with an image.</description>
+    <enclosure url="https://example.com/image.jpg" length="12345" type="image/jpeg"/>
+    <pubDate>Wed, 17 Jan 2024 09:00:00 GMT</pubDate>
+  </item>
+</channel>
+</rss>

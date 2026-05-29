@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+  <title>CDATA Feed</title>
+  <link>https://example.com</link>
+  <description><![CDATA[Feed with <em>CDATA</em> content &amp; entities]]></description>
+  <item>
+    <title><![CDATA[Article with <b>HTML</b> &amp; entities]]></title>
+    <link>https://example.com/cdata-1</link>
+    <description><![CDATA[<p>Description with <a href="https://link.com">a link</a> &amp; special chars.</p>]]></description>
+    <pubDate>Thu, 18 Jan 2024 12:00:00 GMT</pubDate>
+    <author><![CDATA[Jane &amp; Co]]></author>
+  </item>
+  <item>
+    <title>Entity &amp; Test &lt;tag&gt;</title>
+    <link>https://example.com/entity-1</link>
+    <description>Content with &quot;quotes&quot; and &#39;apostrophe&#39; and &#x21; entity.</description>
+    <media:content url="https://cdn.example.com/media.jpg" type="image/jpeg"/>
+    <pubDate>Fri, 19 Jan 2024 08:00:00 GMT</pubDate>
+  </item>
+  <item>
+    <title><![CDATA[<img src="https://example.com/img-in-title.jpg">Image in title]]></title>
+    <link>https://example.com/cdata-3</link>
+    <description>No image here.</description>
+    <pubDate>Sat, 20 Jan 2024 16:30:00 GMT</pubDate>
+  </item>
+</channel>
+</rss>

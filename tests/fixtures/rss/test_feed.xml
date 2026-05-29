@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+  <title>Test Feed for Ingest Step</title>
+  <link>https://example.com</link>
+  <description>Used for ingest step tests</description>
+  <item>
+    <title>Recent Article One</title>
+    <link>https://example.com/article-recent-1</link>
+    <description>First recent article description.</description>
+    <pubDate>Wed, 22 May 2024 10:00:00 GMT</pubDate>
+    <author>Author One</author>
+  </item>
+  <item>
+    <title>Recent Article Two</title>
+    <link>https://example.com/article-recent-2</link>
+    <description>Second recent article with image.</description>
+    <pubDate>Thu, 23 May 2024 14:00:00 GMT</pubDate>
+    <enclosure url="https://example.com/image2.jpg" length="5000" type="image/jpeg"/>
+  </item>
+  <item>
+    <title>Older Article</title>
+    <link>https://example.com/article-old</link>
+    <description>This is an older article from January.</description>
+    <pubDate>Mon, 15 Jan 2024 08:00:00 GMT</pubDate>
+    <author>Older Author</author>
+  </item>
+</channel>
+</rss>
