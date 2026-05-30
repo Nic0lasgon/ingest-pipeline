@@ -240,6 +240,75 @@ Si toutes échouent → fallback **Scrapling Hetzner** (extraction JavaScript-re
 - Nombre de mots ≥ 350
 - En dessous → article rejeté (`content_too_short`)
 
+## Sources RSS — Audit du 2026-05-30
+
+### Méthodologie
+
+Chaque flux a été testé avec les **stratégies réelles du pipeline** :
+1. Fetch RSS (vérification HTTP + parsing)
+2. Extraction de 3 articles par flux via les 5 stratégies HTTP (Googlebot, Google referrer, Twitter referrer, AMP, Facebook referrer)
+3. Fallback Hetzner Scrapling si toutes les stratégies échouent
+4. Extraction texte : trafilatura (primaire) puis regex (fallback)
+5. Vérification paywall, longueur minimale (≥300 chars, ≥50 mots), et qualité du contenu
+
+### 51 flux actifs
+
+| Pays / Catégorie | Flux | Qualité |
+|---|---|---|
+| **France (3)** | France TV Info, Le Parisien, Ouest-France | Solide |
+| **Royaume-Uni (4)** | BBC News, BBC News UK, The Guardian UK, The Independent | Solide |
+| **Espagne (5)** | elDiario.es, 20minutos, El Confidencial, El Mundo, Europa Press | Solide (Europa Press articles courts ~130w) |
+| **États-Unis (4)** | PBS NewsHour, ABC News, CBS News, NPR | Solide |
+| **Canada (2)** | CBC News, Global News | Solide |
+| **Mexique (3)** | Expansion, La Jornada, Proceso | Expansion partiellement paywall |
+| **Australie (4)** | ABC News AU, SBS News, Sydney Morning Herald, The Age | Solide |
+| **Pays-Bas (1)** | NOS Nieuws | Flux sans liens d'articles directs |
+| **Norvège (3)** | Aftenposten, NRK Nyheter, VG | Articles variables (55-1000w) |
+| **Suède (4)** | Dagens Nyheter, SVT Nyheter, Aftonbladet, Expressen | Articles courts (80-400w) |
+| **Suisse (2)** | NZZ, RTS Info | Solide |
+| **Belgique (1)** | La Libre Belgique | 2/3 articles OK |
+| **Danemark (2)** | DR Nyheder, Berlingske | Solide (DR ~3500w/article) |
+| **Irlande (3)** | RTE News, TheJournal.ie, BreakingNews.ie | Solide |
+| **Nouvelle-Zélande (3)** | Newsroom, RNZ, Stuff | Stuff articles souvent courts |
+| **World (4)** | Al Jazeera, BBC World, CNN World, The Guardian World | Solide |
+| **General (2)** | Deutsche Welle, Euronews English | Solide |
+| **Politics (1)** | The Guardian Politics | Solide |
+| **Legacy (2)** | CNN World (world), The Guardian Politics | Anciens flux toujours actifs |
+
+### 19 flux désactivés
+
+| Flux | Raison | Détail |
+|---|---|---|
+| **AP News** | Bloqué | HTTP 403 depuis RSSHub |
+| **RFI English** | Injoignable | Erreur réseau |
+| **Reuters World** | Injoignable | Flux Reuters supprimés |
+| **Reuters Technology** | Injoignable | Flux Reuters supprimés |
+| **Le Monde** | Paywall | Contenu derrière abonnement |
+| **L'Obs** | Paywall | Contenu derrière abonnement |
+| **NYT World** | Paywall | Quota 5 articles/mois |
+| **France24 FR** | Injoignable | 3/3 articles échoués |
+| **France24 EN** | Injoignable | 3/3 articles échoués |
+| **Sky News UK** | Injoignable | Bloque toute extraction |
+| **El Economista** | Paywall + URLs cassées | URLs pointant vers localhost |
+| **Aristegui** | RSS cassé | Flux injoignable |
+| **De Telegraaf** | RSS cassé | Flux injoignable |
+| **AD.nl** | Bloque extraction | 3/3 échoués |
+| **NU.nl** | Bloque extraction | 3/3 échoués |
+| **de Volkskrant** | Bloque extraction | 3/3 échoués |
+| **HLN** | Bloque extraction | 3/3 échoués |
+| **24 heures** | RSS cassé | Flux injoignable |
+| **TV2 Nyheter** | RSS inutilisable | Flux sans URLs d'articles |
+
+### Flux à surveiller
+
+Ces flux fonctionnent mais produisent des articles courts (proches des seuils minimum) :
+
+- **Aftonbladet** (Suède) : ~80-200 mots/article
+- **Expressen** (Suède) : ~100-300 mots/article
+- **SVT Nyheter** (Suède) : ~180-430 mots/article
+- **Europa Press** (Espagne) : ~130 mots/article
+- **Expansion** (Mexique) : partiellement paywall
+
 ## Bugs connus
 
 ### BUG-001 : Migration 0005 `IF NOT EXISTS` invalide — **FIXÉ**
