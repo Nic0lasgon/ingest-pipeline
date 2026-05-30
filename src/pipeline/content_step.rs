@@ -8,9 +8,10 @@ use crate::config::Config;
 use crate::db::article_queries::{
     enrich_from_duplicate, find_similar_articles, get_by_id, get_comparable_articles,
     update_duplicate_and_processing, update_extraction, update_processing_status,
+    update_quality_status,
 };
 use crate::db::rejected_queries::insert_from_article;
-use crate::db::schema::{DuplicateStatus, ProcessingStatus};
+use crate::db::schema::{DuplicateStatus, ProcessingStatus, QualityStatus};
 use crate::utils::dedup::check_duplicate;
 use crate::utils::text_extract::{clean_with_trafilatura, extract_text, ExtractionResult};
 use crate::utils::word_count::{count_words, MIN_ARTICLE_WORD_COUNT};
@@ -339,6 +340,18 @@ pub async fn process_content_step(
     .await
     {
         error!(%article_id, error = %e, "Failed to update extraction");
+        return ContentStepResult {
+            article_id,
+            status: ContentStepStatus::ExtractionFailed,
+            content_length: None,
+            duplicate_reason: None,
+            error: Some(format!("DB error: {e}")),
+            retryable: true,
+        };
+    }
+
+    if let Err(e) = update_quality_status(pool, article_id, QualityStatus::Qualified).await {
+        error!(%article_id, error = %e, "Failed to update quality status");
         return ContentStepResult {
             article_id,
             status: ContentStepStatus::ExtractionFailed,

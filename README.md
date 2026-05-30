@@ -248,17 +248,11 @@ Si toutes échouent → fallback **Scrapling Hetzner** (extraction JavaScript-re
 - **Fix** : Remplacement par un bloc `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN null; END $$;`
 - **Statut** : Corrigé dans `migrations/0005_unique_url_source.sql`
 
-### BUG-003 : `quality_status` jamais mis à `qualified` — **NON FIXÉ** (BLOQUANT)
+### BUG-003 : `quality_status` jamais mis à `qualified` — **FIXÉ**
 
-- **Cause** : `content_step.rs` met `processing_status = 'PendingQualification'` mais ne définit pas `quality_status = 'qualified'`. L'étape de qualification est un placeholder commenté dans `content_worker.rs:46`.
-- **Impact** : Les articles extraits avec succès restent en `quality_status = 'pending'` et ne sont pas importables par Vox\_rag.
-- **Workaround** :
-  ```sql
-  UPDATE raw_articles SET quality_status = 'qualified'
-  WHERE processing_status IN ('pending_qualification')
-    AND content IS NOT NULL AND length(content) > 300;
-  ```
-- **Fix nécessaire** : Ajouter `quality_status = 'qualified'` dans `content_step.rs` après extraction réussie.
+- **Cause** : `content_step.rs` met `processing_status = 'PendingQualification'` mais ne définissait pas `quality_status = 'qualified'`.
+- **Fix** : Ajout d'un appel à `update_quality_status(pool, article_id, QualityStatus::Qualified)` dans `content_step.rs` après extraction réussie et déduplication validée.
+- **Statut** : Corrigé dans `src/pipeline/content_step.rs`
 
 ## Intégration avec Vox\_rag
 
